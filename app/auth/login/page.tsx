@@ -3,7 +3,6 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import toast from 'react-hot-toast'
-import Image from 'next/image'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -34,12 +33,7 @@ export default function LoginPage() {
       options: { data: { first_name: firstName, last_name: lastName, role: 'parent' } }
     })
     if (error) { toast.error(error.message); setLoading(false); return }
-    // Update phone if provided
-    if (phone) {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) await supabase.from('profiles').update({ phone }).eq('id', user.id)
-    }
-    toast.success('Account created! Please check your email to verify.')
+    toast.success('Account created! You can now sign in.')
     setMode('login')
     setLoading(false)
   }
@@ -51,14 +45,15 @@ export default function LoginPage() {
       redirectTo: `${window.location.origin}/auth/reset-password`
     })
     if (error) { toast.error(error.message) }
-    else { toast.success('Password reset email sent!'); setMode('login') }
+    else { toast.success('Password reset link sent to your email!'); setMode('login') }
     setLoading(false)
   }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-50">
-      {/* Hero card */}
       <div className="w-full max-w-sm">
+
+        {/* Hero */}
         <div className="relative rounded-2xl overflow-hidden mb-4 shadow-lg h-36">
           <img src="/centre.jpg" alt="Kumon Brookswood Centre" className="w-full h-full object-cover object-center" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-black/10" />
@@ -71,7 +66,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        {/* Address bar */}
+        {/* Address */}
         <div className="card p-3 mb-4 flex gap-4 text-xs text-slate-500">
           <a href="https://maps.google.com/?q=4043+200+St+Langley+BC" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-[#009FE3] transition-colors">
             <svg className="w-3.5 h-3.5 text-[#009FE3]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -85,43 +80,71 @@ export default function LoginPage() {
 
         {/* Auth card */}
         <div className="card p-6">
+
+          {/* SIGN IN */}
           {mode === 'login' && (
             <>
-              <h2 className="text-base font-semibold mb-1">Sign in</h2>
-              <p className="text-slate-500 text-sm mb-5">Sign in to manage your child's sessions.</p>
+              <h2 className="text-base font-semibold mb-1">Welcome back</h2>
+              <p className="text-slate-500 text-sm mb-5">Sign in to view and manage your child's sessions.</p>
               <form onSubmit={handleLogin} className="space-y-3">
-                <div><label className="label">Email</label>
-                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required /></div>
-                <div><label className="label">Password</label>
-                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required /></div>
+                <div>
+                  <label className="label">Email address</label>
+                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" autoComplete="email" required />
+                </div>
+                <div>
+                  <label className="label">Password</label>
+                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" autoComplete="current-password" required />
+                </div>
                 <button className="btn-primary w-full mt-1" disabled={loading}>
                   {loading ? 'Signing in…' : 'Sign in →'}
                 </button>
               </form>
-              <div className="mt-4 flex flex-col gap-2 text-center text-sm">
-                <button onClick={() => setMode('register')} className="text-[#009FE3] hover:underline">Create an account</button>
-                <button onClick={() => setMode('reset')} className="text-slate-400 hover:text-slate-600 text-xs">Forgot password?</button>
+              <div className="mt-5 pt-4 border-t border-slate-100 text-center space-y-2">
+                <p className="text-xs text-slate-400">New to Kumon Brookswood?</p>
+                <button onClick={() => setMode('register')} className="text-[#009FE3] hover:underline text-sm font-medium">Create a parent account →</button>
               </div>
+              <button onClick={() => setMode('reset')} className="mt-2 w-full text-center text-xs text-slate-400 hover:text-slate-600">Forgot password?</button>
             </>
           )}
 
+          {/* REGISTER */}
           {mode === 'register' && (
             <>
-              <h2 className="text-base font-semibold mb-1">Create account</h2>
-              <p className="text-slate-500 text-sm mb-5">First time? Set up your parent account.</p>
+              <h2 className="text-base font-semibold mb-1">Create your account</h2>
+              <p className="text-slate-500 text-sm mb-1">Register as a parent to book and manage your child's Kumon sessions online.</p>
+
+              {/* What happens next */}
+              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4 text-xs text-blue-700 space-y-1">
+                <div className="font-semibold mb-1">After registering you can:</div>
+                <div className="flex items-start gap-1.5">✅ <span>Add your child and choose their subjects</span></div>
+                <div className="flex items-start gap-1.5">✅ <span>Pick two weekly session days and times</span></div>
+                <div className="flex items-start gap-1.5">✅ <span>View and manage sessions for the whole year</span></div>
+                <div className="flex items-start gap-1.5">✅ <span>Cancel sessions and book makeup classes</span></div>
+              </div>
+
               <form onSubmit={handleRegister} className="space-y-3">
                 <div className="grid grid-cols-2 gap-3">
-                  <div><label className="label">First name</label>
-                    <input className="input" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Sarah" required /></div>
-                  <div><label className="label">Last name</label>
-                    <input className="input" value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Chen" required /></div>
+                  <div>
+                    <label className="label">First name</label>
+                    <input className="input" value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Sarah" autoComplete="given-name" required />
+                  </div>
+                  <div>
+                    <label className="label">Last name</label>
+                    <input className="input" value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Chen" autoComplete="family-name" required />
+                  </div>
                 </div>
-                <div><label className="label">Email</label>
-                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required /></div>
-                <div><label className="label">Password</label>
-                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 8 characters" required /></div>
-                <div><label className="label">Phone (optional)</label>
-                  <input className="input" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 604 000 0000" /></div>
+                <div>
+                  <label className="label">Email address</label>
+                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" autoComplete="email" required />
+                </div>
+                <div>
+                  <label className="label">Password</label>
+                  <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" autoComplete="new-password" required />
+                </div>
+                <div>
+                  <label className="label">Phone <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                  <input className="input" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 604 000 0000" autoComplete="tel" />
+                </div>
                 <button className="btn-primary w-full mt-1" disabled={loading}>
                   {loading ? 'Creating account…' : 'Create account →'}
                 </button>
@@ -130,13 +153,16 @@ export default function LoginPage() {
             </>
           )}
 
+          {/* RESET */}
           {mode === 'reset' && (
             <>
-              <h2 className="text-base font-semibold mb-1">Reset password</h2>
-              <p className="text-slate-500 text-sm mb-5">We'll send you a link to reset your password.</p>
+              <h2 className="text-base font-semibold mb-1">Reset your password</h2>
+              <p className="text-slate-500 text-sm mb-5">Enter your email and we'll send you a link to set a new password.</p>
               <form onSubmit={handleReset} className="space-y-3">
-                <div><label className="label">Email</label>
-                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required /></div>
+                <div>
+                  <label className="label">Email address</label>
+                  <input className="input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" autoComplete="email" required />
+                </div>
                 <button className="btn-primary w-full mt-1" disabled={loading}>
                   {loading ? 'Sending…' : 'Send reset link →'}
                 </button>
@@ -144,7 +170,13 @@ export default function LoginPage() {
               <button onClick={() => setMode('login')} className="mt-4 w-full text-center text-sm text-slate-400 hover:text-slate-600">← Back to sign in</button>
             </>
           )}
+
         </div>
+
+        {/* Footer note */}
+        <p className="text-center text-xs text-slate-400 mt-4">
+          Questions? Call us at <a href="tel:+16042452121" className="text-[#009FE3] hover:underline">(604) 245-2121</a>
+        </p>
       </div>
     </div>
   )
