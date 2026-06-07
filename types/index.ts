@@ -110,6 +110,9 @@ export function getDuration(category: Category, subjects: Subject): number {
 export function getSlots(day: DayOfWeek, category: Category, subjects: Subject): string[] {
   const hours = OPERATING_HOURS[day]
   const duration = getDuration(category, subjects)
+  // Early Learner: every 30 min (group based)
+  // Main Class: every 15 min (students work independently)
+  const step = category === 'early_learner' ? 30 : 15
   const slots: string[] = []
   const [openH, openM] = hours.open.split(':').map(Number)
   const [closeH, closeM] = hours.close.split(':').map(Number)
@@ -120,7 +123,7 @@ export function getSlots(day: DayOfWeek, category: Category, subjects: Subject):
     const h = Math.floor(t / 60)
     const m = t % 60
     slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
-    t += duration
+    t += step
   }
   return slots
 }
