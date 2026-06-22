@@ -4,6 +4,13 @@ import { NextResponse, type NextRequest } from 'next/server'
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request: { headers: request.headers } })
 
+  const { pathname } = request.nextUrl
+
+  // Allow API routes to handle their own auth
+  if (pathname.startsWith('/api/')) {
+    return response
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -25,34 +32,48 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-  const { pathname } = request.nextUrl
 
   // Not logged in — redirect to login
   if (!user && !pathname.startsWith('/auth')) {
     return NextResponse.redirect(new URL('/auth/login', request.url))
   }
 
-  // Logged in — check role for protected routes
-  if (user && !pathname.startsWith('/auth')) {
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+  // Logged in on auth page — redirect to appropriate dashboard
+  if (user && pathname.startsWith('/auth')) {
+    const { data: profile } = await supabase
+      .from('profiles').select('role').eq('id', user.id).single()
+    return NextResponse.redirect(new URL(
+      profile?.role === 'admin' ? '/admin/dashboard' : '/parent/dashboard',
+      request.url
+    ))
+  }
 
-    // Admin trying to access parent routes
-    if (profile?.role === 'admin' && pathname.startsWith('/parent')) {
-      return NextResponse.redirect(new URL('/admin/dashboard', request.url))
-    }
-
-    // Parent trying to access admin routes
-    if (profile?.role === 'parent' && pathname.startsWith('/admin')) {
+  // Protect admin routes
+  if (user && pathname.startsWith('/admin')) {
+    const { data: profile } = await supabase
+      .from('profiles').select('role').eq('id', user.id).single()
+    if (profile?.role !== 'admin') {
       return NextResponse.redirect(new URL('/parent/dashboard', request.url))
     }
+  }
 
-    // Root redirect
-    if (pathname === '/') {
-      return NextResponse.redirect(new URL(
-        profile?.role === 'admin' ? '/admin/dashboard' : '/parent/dashboard',
-        request.url
-      ))
+  // Protect parent routes
+  if (user && pathname.startsWith('/parent')) {
+    const { data: profile } = await supabase
+      .from('profiles').select('role').eq('id', user.id).single()
+    if (profile?.role === 'admin') {
+      return NextResponse.redirect(new URL('/admin/dashboard', request.url))
     }
+  }
+
+  // Root redirect
+  if (user && pathname === '/') {
+    const { data: profile } = await supabase
+      .from('profiles').select('role').eq('id', user.id).single()
+    return NextResponse.redirect(new URL(
+      profile?.role === 'admin' ? '/admin/dashboard' : '/parent/dashboard',
+      request.url
+    ))
   }
 
   return response
