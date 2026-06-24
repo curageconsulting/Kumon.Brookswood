@@ -1,181 +1,193 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Student, Profile, categoryLabel, subjectLabel } from '@/types'
+import { categoryLabel, subjectLabel } from '@/types'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 
-type FormData = {
-  parent_email: string
-  first_name: string
-  last_name: string
-  category: 'early_learner' | 'main'
-  subjects: 'math' | 'reading' | 'both'
-  kumon_level: string
-}
-
-const INIT: FormData = { parent_email: '', first_name: '', last_name: '', category: 'early_learner', subjects: 'math', kumon_level: '' }
-
 export default function AdminStudentsPage() {
-  const [students, setStudents] = useState<(Student & { parent: Profile })[]>([])
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<FormData>(INIT)
-  const [saving, setSaving] = useState(false)
+  const [students, setStudents] = useState<any[]>([])
+  const [teachers, setTeachers] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'early_learner' | 'main'>('all')
+  const [filter, setFilter] = useState<'all'|'early_learner'|'main'|'no_teacher'>('all')
   const supabase = createClient()
 
   useEffect(() => { load() }, [])
 
   async function load() {
-    const { data } = await supabase
-      .from('students')
-      .select('*, parent:profiles(*)')
-      .order('created_at', { ascending: false })
-    setStudents((data || []) as any)
+    const [{ data: studs }, { data: tchs }] = await Promise.all([
+      supabase.from('students')
+        .select(`
+          *,
+          parent:profiles(id, first_name, last_name, email),
+          teacher:teachers(id, name)
+        `)
+        .eq('status', 'active')
+        .order('last_name', { ascending: true }),
+      supabase.from('teachers').select('*').eq('is_active', true).order('name'),
+    ])
+    setStudents(studs || [])
+    setTeachers(tchs || [])
+    setLoading(false)
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    // Find parent by email
-    const { data: parentProfile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('role', 'parent')
-      .single()
-
-    // For demo: in production, look up by auth user email
-    // Here we use a simpler approach - admin enters parent's user ID or email
-    const { data: authUsers } = await supabase.auth.admin?.listUsers() || { data: null }
-
-    // Insert student - parent_id would be resolved from email in production
-    const { error } = await supabase.from('students').insert({
-      parent_id: parentProfile?.id, // simplified - real app resolves from email
-      first_name: form.first_name,
-      last_name: form.last_name,
-      category: form.category,
-      subjects: form.subjects,
-      kumon_level: form.kumon_level || null,
-      status: 'active',
-    })
-
-    if (error) { toast.error('Failed to save student'); setSaving(false); return }
-    toast.success('Student added!')
-    setForm(INIT)
-    setShowForm(false)
-    setSaving(false)
+  async function assignTeacher(studentId: string, teacherId: string) {
+    await supabase.from('students')
+      .update({ teacher_id: teacherId || null })
+      .eq('id', studentId)
+    toast.success('Teacher assigned!')
     load()
   }
 
-  async function toggleStatus(student: Student) {
-    const newStatus = student.status === 'active' ? 'archived' : 'active'
-    await supabase.from('students').update({ status: newStatus }).eq('id', student.id)
-    toast.success(newStatus === 'archived' ? 'Student archived' : 'Student restored')
+  async function archiveStudent(id: string) {
+    await supabase.from('students').update({ status: 'archived' }).eq('id', id)
+    toast.success('Student archived')
     load()
   }
 
   const filtered = students.filter(s => {
-    const matchSearch = `${s.first_name} ${s.last_name}`.toLowerCase().includes(search.toLowerCase())
-    const matchFilter = filter === 'all' || s.category === filter
+    const name = `${s.first_name} ${s.last_name}`.toLowerCase()
+    const parentName = `${s.parent?.first_name || ''} ${s.parent?.last_name || ''}`.toLowerCase()
+    const matchSearch = name.includes(search.toLowerCase()) || parentName.includes(search.toLowerCase())
+    const matchFilter = filter === 'all' ? true
+      : filter === 'no_teacher' ? !s.teacher_id
+      : s.category === filter
     return matchSearch && matchFilter
   })
+
+  const noTeacherCount = students.filter(s => !s.teacher_id).length
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="text-slate-400 text-sm">Loading…</div></div>
 
   return (
     <div className="min-h-screen bg-slate-50">
       <div className="bg-white border-b border-slate-100 px-4 py-4">
-        <div className="max-w-4xl mx-auto flex items-center justify-between">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/admin/dashboard" className="text-slate-400 hover:text-slate-600">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
             </Link>
             <h1 className="font-semibold text-slate-900">Students</h1>
+            <span className="badge-gray">{students.length} active</span>
+            {noTeacherCount > 0 && (
+              <span className="badge-amber cursor-pointer" onClick={() => setFilter('no_teacher')}>
+                ⚠️ {noTeacherCount} without teacher
+              </span>
+            )}
           </div>
-          <button onClick={() => setShowForm(true)} className="btn-primary text-xs px-4 py-2">+ Add student</button>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-        {/* Add student form */}
-        {showForm && (
-          <div className="card p-5">
-            <h2 className="font-semibold text-slate-900 mb-4 text-sm">Add new student</h2>
-            <form onSubmit={handleSave} className="space-y-3">
-              <div><label className="label">Parent email</label>
-                <input className="input" type="email" value={form.parent_email} onChange={e => setForm({...form, parent_email: e.target.value})} placeholder="parent@email.com" required /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="label">Student first name</label>
-                  <input className="input" value={form.first_name} onChange={e => setForm({...form, first_name: e.target.value})} placeholder="Alex" required /></div>
-                <div><label className="label">Student last name</label>
-                  <input className="input" value={form.last_name} onChange={e => setForm({...form, last_name: e.target.value})} placeholder="Chen" required /></div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="label">Category</label>
-                  <select className="input" value={form.category} onChange={e => setForm({...form, category: e.target.value as any})}>
-                    <option value="early_learner">Early Learner (Age 3–9)</option>
-                    <option value="main">Main Class (Age 9+)</option>
-                  </select></div>
-                <div><label className="label">Subjects</label>
-                  <select className="input" value={form.subjects} onChange={e => setForm({...form, subjects: e.target.value as any})}>
-                    <option value="math">Mathematics only</option>
-                    <option value="reading">Reading only</option>
-                    <option value="both">Math + Reading</option>
-                  </select></div>
-              </div>
-              <div><label className="label">Kumon level (admin only)</label>
-                <input className="input" value={form.kumon_level} onChange={e => setForm({...form, kumon_level: e.target.value})} placeholder="e.g. 3A" /></div>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => setShowForm(false)} className="btn-secondary flex-1">Cancel</button>
-                <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : 'Add student'}</button>
-              </div>
-            </form>
-          </div>
-        )}
-
+      <div className="max-w-5xl mx-auto px-4 py-6 space-y-4">
         {/* Filters */}
-        <div className="flex gap-2 flex-wrap">
-          <input className="input max-w-xs text-sm py-2" placeholder="Search students…" value={search} onChange={e => setSearch(e.target.value)} />
-          {(['all','early_learner','main'] as const).map(f => (
+        <div className="flex gap-2 flex-wrap items-center">
+          <input className="input max-w-xs text-sm py-2" placeholder="Search students or parents…"
+            value={search} onChange={e => setSearch(e.target.value)} />
+          {(['all','early_learner','main','no_teacher'] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${filter === f ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#009FE3]'}`}>
-              {f === 'all' ? 'All' : categoryLabel(f)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
+                ${filter === f ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#009FE3]'}`}>
+              {f === 'all' ? 'All' : f === 'early_learner' ? 'Early Learner' : f === 'main' ? 'Main Class' : '⚠️ No teacher'}
             </button>
           ))}
         </div>
 
         {/* Students list */}
         <div className="card overflow-hidden">
-          <div className="px-5 py-3 border-b border-slate-50 flex items-center justify-between">
-            <span className="text-xs text-slate-500">{filtered.length} student{filtered.length !== 1 ? 's' : ''}</span>
+          <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 grid grid-cols-12 gap-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <span className="col-span-3">Student</span>
+            <span className="col-span-2">Category</span>
+            <span className="col-span-3">Parent</span>
+            <span className="col-span-3">Teacher</span>
+            <span className="col-span-1"></span>
           </div>
           <div className="divide-y divide-slate-50">
-            {filtered.map(st => (
-              <div key={st.id} className={`px-5 py-3.5 flex items-center justify-between ${st.status === 'archived' ? 'opacity-50' : ''}`}>
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-[#E0F4FD] text-[#0077B6] flex items-center justify-center font-bold text-xs">
-                    {st.first_name[0]}{st.last_name[0]}
+            {filtered.map(st => {
+              const parentName = st.parent?.first_name
+                ? `${st.parent.first_name} ${st.parent.last_name}`
+                : st.parent?.email || '—'
+              const hasParentName = st.parent?.first_name && st.parent.first_name.trim() !== ''
+
+              return (
+                <div key={st.id} className="px-5 py-3.5 grid grid-cols-12 gap-3 items-center">
+                  {/* Student */}
+                  <div className="col-span-3 flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-[#E0F4FD] text-[#0077B6] flex items-center justify-center font-bold text-xs flex-shrink-0">
+                      {st.first_name[0]}{st.last_name[0]}
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">{st.first_name} {st.last_name}</div>
+                      <div className="text-xs text-slate-400">{subjectLabel(st.subjects)}</div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-sm font-medium text-slate-900">{st.first_name} {st.last_name}</div>
-                    <div className="text-xs text-slate-500">{subjectLabel(st.subjects)} · {st.kumon_level ? `Level ${st.kumon_level}` : 'No level set'}</div>
-                    {st.parent && <div className="text-xs text-slate-400">Parent: {(st.parent as any).first_name} {(st.parent as any).last_name}</div>}
+
+                  {/* Category */}
+                  <div className="col-span-2">
+                    <span className={st.category === 'early_learner' ? 'badge-green' : 'badge-teal'}>
+                      {categoryLabel(st.category)}
+                    </span>
+                  </div>
+
+                  {/* Parent */}
+                  <div className="col-span-3">
+                    {hasParentName ? (
+                      <div>
+                        <div className="text-sm text-slate-700">{parentName}</div>
+                        <div className="text-xs text-slate-400">{st.parent?.email}</div>
+                      </div>
+                    ) : st.parent?.email ? (
+                      <div>
+                        <div className="text-xs text-amber-600 font-medium">⚠️ Name not set</div>
+                        <div className="text-xs text-slate-400">{st.parent.email}</div>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-red-500">No parent account</span>
+                    )}
+                  </div>
+
+                  {/* Teacher */}
+                  <div className="col-span-3">
+                    <select
+                      className="input text-xs py-1.5"
+                      value={st.teacher_id || ''}
+                      onChange={e => assignTeacher(st.id, e.target.value)}>
+                      <option value="">— Assign teacher —</option>
+                      {teachers.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    {!st.teacher_id && (
+                      <div className="text-[10px] text-amber-500 mt-0.5">⚠️ No teacher assigned</div>
+                    )}
+                    {st.teacher && (
+                      <div className="text-[10px] text-purple-500 mt-0.5">👩‍🏫 {st.teacher.name}</div>
+                    )}
+                  </div>
+
+                  {/* Actions */}
+                  <div className="col-span-1 flex justify-end">
+                    <Link href={`/admin/students/${st.id}`}
+                      className="badge-teal cursor-pointer hover:bg-blue-100 text-[11px]">
+                      Edit
+                    </Link>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={st.category === 'early_learner' ? 'badge-green' : 'badge-teal'}>{categoryLabel(st.category)}</span>
-                  {st.status === 'archived' && <span className="badge-gray">Archived</span>}
-                  <Link href={`/admin/students/${st.id}`} className="badge-gray hover:bg-slate-200 transition-colors cursor-pointer">Edit</Link>
-                  <button onClick={() => toggleStatus(st)} className={st.status === 'active' ? 'badge-red cursor-pointer hover:bg-red-100' : 'badge-green cursor-pointer hover:bg-green-100'}>
-                    {st.status === 'active' ? 'Archive' : 'Restore'}
-                  </button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
             {filtered.length === 0 && (
               <div className="px-5 py-8 text-center text-sm text-slate-400">No students found</div>
             )}
           </div>
         </div>
+
+        {/* Missing parent names notice */}
+        {students.some(s => s.parent && (!s.parent.first_name || s.parent.first_name.trim() === '')) && (
+          <div className="card p-4 border-amber-100 bg-amber-50">
+            <p className="text-sm text-amber-700 font-medium">⚠️ Some parents haven't set their name yet</p>
+            <p className="text-xs text-amber-600 mt-1">These are accounts created via bulk import. Parents will set their name when they first log in and update their profile. Their email is shown instead.</p>
+          </div>
+        )}
       </div>
     </div>
   )
