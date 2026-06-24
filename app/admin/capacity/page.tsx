@@ -31,6 +31,7 @@ export default function AdminCapacityPage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(new Date().toISOString().slice(0,10))
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all'|'early_learner'|'main'>('all')
+  const [teacherFilter, setTeacherFilter] = useState<string>('all')
   const [teachers, setTeachers] = useState<any[]>([])
   const [savingTeacher, setSavingTeacher] = useState<string | null>(null)
   const supabase = createClient()
@@ -89,7 +90,14 @@ export default function AdminCapacityPage() {
     return `${calMonth.year}-${String(calMonth.month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
   }
   function sessionsForDate(date: string) {
-    return sessions.filter(s => s.session_date === date && (filter === 'all' || s.student?.category === filter))
+    return sessions.filter(s => {
+      const matchDate = s.session_date === date
+      const matchCat = filter === 'all' || s.student?.category === filter
+      const matchTeacher = teacherFilter === 'all' ? true
+        : teacherFilter === 'unassigned' ? !s.student?.teacher_id
+        : s.student?.teacher_id === teacherFilter
+      return matchDate && matchCat && matchTeacher
+    })
   }
   function prevMonth() { setCalMonth(m => m.month === 0 ? { year: m.year-1, month:11 } : { ...m, month: m.month-1 }); setSelectedDay(null) }
   function nextMonth() { setCalMonth(m => m.month === 11 ? { year: m.year+1, month:0 } : { ...m, month: m.month+1 }); setSelectedDay(null) }
@@ -130,14 +138,37 @@ export default function AdminCapacityPage() {
             </Link>
             <h1 className="font-semibold text-slate-900">Capacity & Teacher Planning</h1>
           </div>
-          <div className="flex items-center gap-2">
-            {(['all','early_learner','main'] as const).map(f => (
-              <button key={f} onClick={() => setFilter(f)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
-                  ${filter === f ? 'bg-[#009FE3] text-white border-[#009FE3]' : 'bg-white text-slate-600 border-slate-200 hover:border-[#009FE3]'}`}>
-                {f === 'all' ? 'All' : f === 'early_learner' ? 'Early Learner' : 'Main Class'}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {/* Category filter */}
+            <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
+              {(['all','early_learner','main'] as const).map(f => (
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                    ${filter === f ? 'bg-white text-[#009FE3] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  {f === 'all' ? 'All classes' : f === 'early_learner' ? '🟢 Early Learner' : '🔵 Main Class'}
+                </button>
+              ))}
+            </div>
+            {/* Teacher filter */}
+            <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
+              <button onClick={() => setTeacherFilter('all')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                  ${teacherFilter === 'all' ? 'bg-white text-[#009FE3] shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                All teachers
               </button>
-            ))}
+              <button onClick={() => setTeacherFilter('unassigned')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                  ${teacherFilter === 'unassigned' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                ⚠️ Unassigned
+              </button>
+              {teachers.map(t => (
+                <button key={t.id} onClick={() => setTeacherFilter(t.id)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors
+                    ${teacherFilter === t.id ? 'bg-white text-purple-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                  👩‍🏫 {t.name.split(' ')[0]}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -225,6 +256,24 @@ export default function AdminCapacityPage() {
 
           {/* Day detail */}
           <div className="lg:col-span-3 space-y-3">
+            {/* Active filter banner */}
+            {(teacherFilter !== 'all' || filter !== 'all') && (
+              <div className="card p-3 flex items-center justify-between bg-purple-50 border-purple-100">
+                <div className="text-xs text-purple-700 font-medium flex items-center gap-2">
+                  <span>🔍 Filtering:</span>
+                  {filter !== 'all' && <span className="badge-teal">{filter === 'early_learner' ? 'Early Learner' : 'Main Class'}</span>}
+                  {teacherFilter === 'unassigned' && <span className="badge-amber">⚠️ Unassigned only</span>}
+                  {teacherFilter !== 'all' && teacherFilter !== 'unassigned' && (
+                    <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-xs font-semibold">
+                      👩‍🏫 {teachers.find(t => t.id === teacherFilter)?.name}
+                    </span>
+                  )}
+                </div>
+                <button onClick={() => { setFilter('all'); setTeacherFilter('all') }}
+                  className="text-xs text-purple-500 hover:text-purple-700 underline">Clear filters</button>
+              </div>
+            )}
+
             {selectedDay ? (
               <>
                 {/* Day header */}
