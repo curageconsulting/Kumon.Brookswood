@@ -101,7 +101,10 @@ export const OPERATING_HOURS: Record<DayOfWeek, { open: string; close: string }>
   saturday: { open: '09:00', close: '12:00' },
 }
 
-export const CANCELLATION_NOTICE_DAYS = 3
+export const CANCELLATION_NOTICE_HOURS = 24
+
+// Keep for backwards compatibility
+export const CANCELLATION_NOTICE_DAYS = 1
 
 export function getDuration(category: Category, subjects: Subject): number {
   return SESSION_DURATION[category][subjects]
@@ -141,12 +144,22 @@ export function formatDate(date: string): string {
   })
 }
 
-export function canCancel(sessionDate: string): boolean {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const sDate = new Date(sessionDate + 'T00:00:00')
-  const diff = Math.round((sDate.getTime() - today.getTime()) / 86400000)
-  return diff >= CANCELLATION_NOTICE_DAYS
+export function canCancel(sessionDate: string, sessionTime?: string): boolean {
+  const now = new Date()
+  // Combine session date and time for accurate 24hr check
+  const sessionDateTime = sessionTime
+    ? new Date(`${sessionDate}T${sessionTime}`)
+    : new Date(sessionDate + 'T23:59:00')
+  const diffHours = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
+  return diffHours >= 24
+}
+
+export function hoursUntil(sessionDate: string, sessionTime?: string): number {
+  const now = new Date()
+  const sessionDateTime = sessionTime
+    ? new Date(`${sessionDate}T${sessionTime}`)
+    : new Date(sessionDate + 'T23:59:00')
+  return Math.round((sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60))
 }
 
 export function daysUntil(sessionDate: string): number {
@@ -154,6 +167,14 @@ export function daysUntil(sessionDate: string): number {
   today.setHours(0, 0, 0, 0)
   const sDate = new Date(sessionDate + 'T00:00:00')
   return Math.round((sDate.getTime() - today.getTime()) / 86400000)
+}
+
+export function timeUntilLabel(sessionDate: string, sessionTime?: string): string {
+  const hours = hoursUntil(sessionDate, sessionTime)
+  if (hours < 1) return 'Starting soon'
+  if (hours < 24) return `${hours}h away`
+  const days = Math.floor(hours / 24)
+  return `${days}d away`
 }
 
 export function categoryLabel(category: Category): string {
