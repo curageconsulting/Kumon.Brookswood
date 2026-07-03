@@ -157,7 +157,7 @@ export default function CancelSessionPage() {
             </div>
             {!cancellable ? (
               <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-700">
-                <strong>Cannot cancel online.</strong> Cancellations must be made at least 3 days before the session. Please call (604) 245-2121 to speak with the centre.
+                <strong>Cannot cancel online.</strong> Cancellations must be made at least 24 hours before the session. Please call (604) 245-2121 to speak with the centre.
               </div>
             ) : (
               <>
