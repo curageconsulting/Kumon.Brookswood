@@ -261,11 +261,13 @@ export default function ParentDashboard() {
           </div>
         </div>
         {(view === 'dashboard' || view === 'calendar') && (
-          <div className="max-w-3xl mx-auto px-4 flex gap-1 pb-0">
-            <button onClick={() => setView('dashboard')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${view === 'dashboard' ? 'bg-white text-[#0077B6]' : 'text-white/70 hover:text-white'}`}>📋 Upcoming</button>
-            <button onClick={() => setView('calendar')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${view === 'calendar' ? 'bg-white text-[#0077B6]' : 'text-white/70 hover:text-white'}`}>📅 Calendar</button>
-          </div>
-        )}
+  <div className="max-w-3xl mx-auto px-4 flex gap-1 pb-0 overflow-x-auto">
+    <button onClick={() => setView('dashboard')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${view === 'dashboard' ? 'bg-white text-[#0077B6]' : 'text-white/70 hover:text-white'}`}>📋 Sessions</button>
+    <button onClick={() => setView('calendar')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${view === 'calendar' ? 'bg-white text-[#0077B6]' : 'text-white/70 hover:text-white'}`}>📅 Calendar</button>
+    <Link href="/parent/progress" className="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors text-white/70 hover:text-white whitespace-nowrap">📈 Progress</Link>
+    <Link href="/parent/notifications" className="px-4 py-2 text-sm font-medium rounded-t-lg transition-colors text-white/70 hover:text-white whitespace-nowrap">🔔 Alerts</Link>
+  </div>
+)}
       </div>
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-4">
