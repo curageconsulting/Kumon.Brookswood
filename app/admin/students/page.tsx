@@ -20,7 +20,7 @@ export default function AdminStudentsPage() {
       supabase.from('students')
         .select(`
           *,
-          parent:profiles(id, first_name, last_name, email),
+          parent:profiles(id, first_name, last_name, email, phone),
           teacher:teachers(id, name)
         `)
         .eq('status', 'active')
@@ -135,11 +135,21 @@ export default function AdminStudentsPage() {
                       <div>
                         <div className="text-sm text-slate-700">{parentName}</div>
                         <div className="text-xs text-slate-400">{st.parent?.email}</div>
+                        {st.parent?.phone && (
+                          <a href={`tel:${st.parent.phone}`} className="text-xs text-[#009FE3] hover:underline">
+                            📞 {st.parent.phone}
+                          </a>
+                        )}
                       </div>
                     ) : st.parent?.email ? (
                       <div>
                         <div className="text-xs text-amber-600 font-medium">⚠️ Name not set</div>
                         <div className="text-xs text-slate-400">{st.parent.email}</div>
+                        {st.parent?.phone && (
+                          <a href={`tel:${st.parent.phone}`} className="text-xs text-[#009FE3] hover:underline">
+                            📞 {st.parent.phone}
+                          </a>
+                        )}
                       </div>
                     ) : (
                       <span className="text-xs text-red-500">No parent account</span>
