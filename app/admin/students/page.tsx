@@ -371,13 +371,7 @@ export default function AdminStudentsPage() {
 
         {/* Students list */}
         <div className="card overflow-hidden">
-          <div className="px-5 py-3 bg-slate-50 border-b border-slate-100 grid grid-cols-12 gap-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            <span className="col-span-3">Student</span>
-            <span className="col-span-2">Category</span>
-            <span className="col-span-3">Parent</span>
-            <span className="col-span-2">Teacher</span>
-            <span className="col-span-2 text-right">Actions</span>
-          </div>
+
           <div className="divide-y divide-slate-50">
             {filtered.map(st => {
               const parentName = st.parent?.first_name
@@ -387,9 +381,10 @@ export default function AdminStudentsPage() {
               const isArchived = st.status === 'archived'
 
               return (
-                <div key={st.id} className={`px-5 py-3.5 grid grid-cols-12 gap-3 items-center ${isArchived ? 'opacity-60 bg-slate-50/50' : ''}`}>
+                <div key={st.id} className={`px-4 py-4 ${isArchived ? 'opacity-60 bg-slate-50/50' : ''}`}>
+                  <div className="flex flex-wrap items-start gap-3">
                   {/* Student */}
-                  <div className="col-span-3 flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 min-w-[160px] flex-1">
                     <div className="w-8 h-8 rounded-full bg-[#E0F4FD] text-[#0077B6] flex items-center justify-center font-bold text-xs flex-shrink-0">
                       {st.first_name[0]}{st.last_name[0]}
                     </div>
@@ -400,7 +395,7 @@ export default function AdminStudentsPage() {
                   </div>
 
                   {/* Category */}
-                  <div className="col-span-2">
+                  <div className="min-w-[100px]">
                     <span className={st.category === 'early_learner' ? 'badge-green' : 'badge-teal'}>
                       {categoryLabel(st.category)}
                     </span>
@@ -408,7 +403,7 @@ export default function AdminStudentsPage() {
                   </div>
 
                   {/* Parent */}
-                  <div className="col-span-3">
+                  <div className="min-w-[160px] flex-1">
                     {hasParentName ? (
                       <div>
                         <div className="text-sm text-slate-700">{parentName}</div>
@@ -431,7 +426,7 @@ export default function AdminStudentsPage() {
                   </div>
 
                   {/* Teacher */}
-                  <div className="col-span-2">
+                  <div className="min-w-[100px]">
                     {!isArchived ? (
                       <div>
                         <select className="input text-xs py-1.5" value={st.teacher_id || ''}
@@ -447,7 +442,7 @@ export default function AdminStudentsPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="col-span-2 flex items-center justify-end gap-1.5 flex-wrap">
+                  <div className="flex items-center gap-1.5 flex-wrap ml-auto">
                     {!isArchived ? (
                       <>
                         <Link href={`/admin/students/${st.id}`} className="badge-teal cursor-pointer hover:bg-blue-100 text-[11px]">Edit</Link>
@@ -472,6 +467,7 @@ export default function AdminStudentsPage() {
                         </button>
                       </>
                     )}
+                  </div>
                   </div>
                 </div>
               )
