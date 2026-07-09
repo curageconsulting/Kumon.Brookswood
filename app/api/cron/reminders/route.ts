@@ -20,16 +20,11 @@ export async function GET(req: NextRequest) {
 
   const now = new Date()
 
-  // Find sessions starting in the next 8-9 hours that haven't had reminder sent
-  const windowStart = new Date(now.getTime() + 8 * 60 * 60 * 1000) // 8 hours from now
-  const windowEnd = new Date(now.getTime() + 9 * 60 * 60 * 1000)   // 9 hours from now
+  // Runs once daily at 8am
+  // Sends reminders for ALL sessions happening today
+  const today = now.toISOString().slice(0, 10)
 
-  const startDateStr = windowStart.toISOString().slice(0, 10)
-  const endDateStr = windowEnd.toISOString().slice(0, 10)
-  const startTimeStr = windowStart.toTimeString().slice(0, 5)
-  const endTimeStr = windowEnd.toTimeString().slice(0, 5)
-
-  // Get sessions in the window with parent phone numbers
+  // Get all scheduled sessions for today that haven't had reminder sent
   const { data: sessions } = await supabase
     .from('sessions')
     .select(`
@@ -40,20 +35,14 @@ export async function GET(req: NextRequest) {
       )
     `)
     .eq('status', 'scheduled')
+    .eq('session_date', today)
     .is('reminder_sent_at', null)
-    .gte('session_date', startDateStr)
-    .lte('session_date', endDateStr)
 
   if (!sessions?.length) {
     return NextResponse.json({ message: 'No reminders to send', count: 0 })
   }
 
-  // Filter to sessions actually in the 8-9 hour window
-  const toRemind = sessions.filter(s => {
-    const sessionDateTime = new Date(`${s.session_date}T${s.start_time}`)
-    const diffHours = (sessionDateTime.getTime() - now.getTime()) / (1000 * 60 * 60)
-    return diffHours >= 8 && diffHours <= 9
-  })
+  const toRemind = sessions || []
 
   const results = { sent: 0, skipped: 0, failed: 0, details: [] as string[] }
 
