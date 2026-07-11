@@ -11,6 +11,7 @@ export default function LoginPage() {
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
   const [phone, setPhone] = useState('')
+  const [smsConsent, setSmsConsent] = useState(false)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
   const supabase = createClient()
@@ -27,12 +28,24 @@ export default function LoginPage() {
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     if (!firstName || !lastName) { toast.error('Please enter your name'); return }
+    if (phone && !smsConsent) { toast.error('Please consent to SMS notifications or remove your phone number'); return }
     setLoading(true)
-    const { error } = await supabase.auth.signUp({
+
+    const { data, error } = await supabase.auth.signUp({
       email, password,
       options: { data: { first_name: firstName, last_name: lastName, role: 'parent' } }
     })
     if (error) { toast.error(error.message); setLoading(false); return }
+
+    // Update profile with phone + consent
+    if (data.user) {
+      await supabase.from('profiles').update({
+        phone: phone || null,
+        sms_consent: smsConsent,
+        sms_consent_at: smsConsent ? new Date().toISOString() : null,
+      }).eq('id', data.user.id)
+    }
+
     toast.success('Account created! You can now sign in.')
     setMode('login')
     setLoading(false)
@@ -113,7 +126,6 @@ export default function LoginPage() {
               <h2 className="text-base font-semibold mb-1">Create your account</h2>
               <p className="text-slate-500 text-sm mb-1">Register as a parent to book and manage your child's Kumon sessions online.</p>
 
-              {/* What happens next */}
               <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-4 text-xs text-blue-700 space-y-1">
                 <div className="font-semibold mb-1">After registering you can:</div>
                 <div className="flex items-start gap-1.5">✅ <span>Add your child and choose their subjects</span></div>
@@ -142,9 +154,29 @@ export default function LoginPage() {
                   <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" autoComplete="new-password" required />
                 </div>
                 <div>
-                  <label className="label">Phone <span className="text-slate-400 font-normal normal-case">(optional)</span></label>
+                  <label className="label">
+                    Mobile number <span className="text-slate-400 font-normal normal-case">(optional — for SMS updates)</span>
+                  </label>
                   <input className="input" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="+1 604 000 0000" autoComplete="tel" />
                 </div>
+
+                {/* SMS Consent — only show if phone entered */}
+                {phone && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smsConsent}
+                        onChange={e => setSmsConsent(e.target.checked)}
+                        className="mt-0.5 flex-shrink-0 w-4 h-4 accent-[#009FE3]"
+                      />
+                      <span className="text-xs text-amber-800 leading-relaxed">
+                        <strong>I consent to receiving SMS text messages</strong> from Kumon Brookswood Learning Centre at the number provided, including session reminders, absence notifications, and important updates. Message and data rates may apply. You can opt out at any time by contacting us at (604) 245-2121.
+                      </span>
+                    </label>
+                  </div>
+                )}
+
                 <button className="btn-primary w-full mt-1" disabled={loading}>
                   {loading ? 'Creating account…' : 'Create account →'}
                 </button>
@@ -170,10 +202,8 @@ export default function LoginPage() {
               <button onClick={() => setMode('login')} className="mt-4 w-full text-center text-sm text-slate-400 hover:text-slate-600">← Back to sign in</button>
             </>
           )}
-
         </div>
 
-        {/* Footer note */}
         <p className="text-center text-xs text-slate-400 mt-4">
           Questions? Call us at <a href="tel:+16042452121" className="text-[#009FE3] hover:underline">(604) 245-2121</a>
         </p>
