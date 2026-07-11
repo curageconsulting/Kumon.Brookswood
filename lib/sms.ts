@@ -4,9 +4,9 @@ const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID!
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN!
 const TWILIO_FROM = process.env.TWILIO_PHONE_NUMBER!
 
-async function sendSMS(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+async function sendSMS(to: string, message: string, checkConsent = true): Promise<{ success: boolean; error?: string }> {
   try {
-    // Clean phone number — ensure it has + prefix
+    // Clean phone number
     let phone = to.replace(/\D/g, '')
     if (phone.length === 10) phone = `+1${phone}`
     else if (phone.length === 11 && phone[0] === '1') phone = `+${phone}`
