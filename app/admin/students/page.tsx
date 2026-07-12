@@ -12,6 +12,8 @@ type AddForm = {
   first_name: string
   last_name: string
   parent_email: string
+  kumon_student_id: string
+  phone: string
   category: 'early_learner' | 'main'
   subjects: 'math' | 'reading' | 'both'
   day1: DayOfWeek
@@ -22,6 +24,7 @@ type AddForm = {
 
 const INIT_FORM: AddForm = {
   first_name: '', last_name: '', parent_email: '',
+  kumon_student_id: '', phone: '',
   category: 'main', subjects: 'math',
   day1: 'monday', time1: '',
   day2: 'thursday', time2: '',
@@ -136,12 +139,18 @@ export default function AdminStudentsPage() {
     const dur = getDuration(form.category, form.subjects)
 
     // Insert student
+    // Update parent phone if provided
+    if (form.phone) {
+      await supabase.from('profiles').update({ phone: form.phone }).eq('id', parentProfile.id)
+    }
+
     const { data: student, error } = await supabase.from('students').insert({
       parent_id: parentProfile.id,
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       category: form.category,
       subjects: form.subjects,
+      kumon_student_id: form.kumon_student_id.trim() || null,
       status: 'active',
     }).select().single()
 
@@ -259,6 +268,10 @@ export default function AdminStudentsPage() {
                   <input className="input" value={form.last_name} onChange={e => setForm({...form, last_name: e.target.value})} placeholder="Chen" required /></div>
                 <div><label className="label">Parent email *</label>
                   <input className="input" type="email" value={form.parent_email} onChange={e => setForm({...form, parent_email: e.target.value})} placeholder="parent@email.com" required /></div>
+                <div><label className="label">Kumon Student ID</label>
+                  <input className="input" value={form.kumon_student_id} onChange={e => setForm({...form, kumon_student_id: e.target.value})} placeholder="e.g. 1242550363740" /></div>
+                <div><label className="label">Parent mobile</label>
+                  <input className="input" type="tel" value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} placeholder="+1 604 000 0000" /></div>
               </div>
 
               {/* Category + Subjects */}
@@ -391,6 +404,7 @@ export default function AdminStudentsPage() {
                     <div>
                       <div className="text-sm font-medium text-slate-900">{st.first_name} {st.last_name}</div>
                       <div className="text-xs text-slate-400">{subjectLabel(st.subjects)}</div>
+                      {st.kumon_student_id && <div className="text-[10px] text-slate-300 font-mono">#{st.kumon_student_id}</div>}
                     </div>
                   </div>
 
