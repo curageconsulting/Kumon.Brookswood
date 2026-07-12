@@ -304,6 +304,13 @@ export default function AdminStudentDetailPage() {
         <div className="card p-5">
           <h2 className="font-semibold text-slate-900 mb-3 text-sm">Student info</h2>
           <div className="space-y-0">
+            <div className="row"><span className="row-label">Kumon Student ID</span>
+              <input className="input max-w-[180px] text-xs py-1.5" defaultValue={student.kumon_student_id || ''}
+                onBlur={async e => {
+                  await supabase.from('students').update({ kumon_student_id: e.target.value || null }).eq('id', id)
+                  toast.success('Student ID updated')
+                }} placeholder="e.g. 1242550363740" />
+            </div>
             <div className="row"><span className="row-label">Category</span>
               <select className="input max-w-[180px] text-xs py-1.5" value={student.category}
                 onChange={async e => {
@@ -334,6 +341,64 @@ export default function AdminStudentDetailPage() {
                   toast.success('Level updated')
                 }} placeholder="e.g. 3A" />
             </div>
+          </div>
+        </div>
+
+        {/* Danger zone */}
+        <div className="card p-5 border-red-100">
+          <h2 className="font-semibold text-slate-900 mb-1 text-sm">⚠️ Danger zone</h2>
+          <p className="text-xs text-slate-500 mb-4">These actions affect the student's record and sessions.</p>
+          <div className="flex flex-col gap-3">
+            {student.status === 'active' ? (
+              <>
+                <div className="flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50">
+                  <div>
+                    <div className="text-sm font-medium text-amber-800">Mark as Left</div>
+                    <div className="text-xs text-amber-600">Cancels all future sessions. Record kept for reference. Can be restored.</div>
+                  </div>
+                  <button onClick={async () => {
+                    const today = new Date().toISOString().slice(0, 10)
+                    await supabase.from('students').update({ status: 'archived' }).eq('id', id)
+                    await supabase.from('sessions').update({ status: 'cancelled' }).eq('student_id', id).gte('session_date', today).eq('status', 'scheduled')
+                    await supabase.from('recurring_schedules').update({ is_active: false }).eq('student_id', id)
+                    toast.success('Student marked as left')
+                    router.push('/admin/students')
+                  }} className="btn-secondary text-xs px-4 py-2 border-amber-300 text-amber-700 hover:bg-amber-100 ml-4 flex-shrink-0">
+                    Mark as Left
+                  </button>
+                </div>
+                <div className="flex items-center justify-between p-3 rounded-lg border border-red-200 bg-red-50">
+                  <div>
+                    <div className="text-sm font-medium text-red-800">Permanently Delete</div>
+                    <div className="text-xs text-red-600">Removes student + all sessions + all schedules forever. Cannot be undone.</div>
+                  </div>
+                  <button onClick={async () => {
+                    if (!window.confirm(`Are you sure you want to permanently delete ${student.first_name} ${student.last_name}? This cannot be undone.`)) return
+                    await supabase.from('sessions').delete().eq('student_id', id)
+                    await supabase.from('recurring_schedules').delete().eq('student_id', id)
+                    await supabase.from('students').delete().eq('id', id)
+                    toast.success('Student permanently deleted')
+                    router.push('/admin/students')
+                  }} className="btn-danger text-xs px-4 py-2 ml-4 flex-shrink-0">
+                    Delete
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-between p-3 rounded-lg border border-green-200 bg-green-50">
+                <div>
+                  <div className="text-sm font-medium text-green-800">Restore Student</div>
+                  <div className="text-xs text-green-600">Re-activates the student. You'll need to re-add their schedule.</div>
+                </div>
+                <button onClick={async () => {
+                  await supabase.from('students').update({ status: 'active' }).eq('id', id)
+                  toast.success('Student restored!')
+                  load()
+                }} className="btn-secondary text-xs px-4 py-2 border-green-300 text-green-700 hover:bg-green-100 ml-4 flex-shrink-0">
+                  Restore
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
