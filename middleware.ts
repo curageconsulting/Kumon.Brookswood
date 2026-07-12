@@ -6,8 +6,8 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl
 
-  // Allow API routes to handle their own auth
-  if (pathname.startsWith('/api/')) {
+  // Allow API routes and kiosk to handle their own auth
+  if (pathname.startsWith('/api/') || pathname.startsWith('/kiosk')) {
     return response
   }
 
