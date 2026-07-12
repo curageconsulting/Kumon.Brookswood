@@ -1,12 +1,26 @@
 // Twilio SMS service for Kumon Brookswood
+// CASL & CTIA compliant SMS templates
 
 const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID!
 const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN!
 const TWILIO_FROM = process.env.TWILIO_PHONE_NUMBER!
 
-async function sendSMS(to: string, message: string, checkConsent = true): Promise<{ success: boolean; error?: string }> {
+// Standard opt-out footer required by CTIA/CASL
+const OPT_OUT = `Reply STOP to unsubscribe or HELP for info. Msg&data rates may apply.`
+
+function formatDateTime(sessionDate: string, sessionTime: string) {
+  const date = new Date(sessionDate + 'T12:00:00').toLocaleDateString('en-CA', {
+    weekday: 'long', month: 'short', day: 'numeric'
+  })
+  const [h, m] = sessionTime.split(':').map(Number)
+  const suffix = h < 12 ? 'AM' : 'PM'
+  const displayH = h === 0 ? 12 : h > 12 ? h - 12 : h
+  const time = `${displayH}:${String(m).padStart(2,'0')} ${suffix}`
+  return { date, time }
+}
+
+async function sendSMS(to: string, message: string): Promise<{ success: boolean; error?: string }> {
   try {
-    // Clean phone number
     let phone = to.replace(/\D/g, '')
     if (phone.length === 10) phone = `+1${phone}`
     else if (phone.length === 11 && phone[0] === '1') phone = `+${phone}`
@@ -40,27 +54,25 @@ async function sendSMS(to: string, message: string, checkConsent = true): Promis
   }
 }
 
-// SMS Templates
+// ============================================================
+// COMPLIANT SMS TEMPLATES
+// All messages include:
+// - Clear sender identification (Kumon Brookswood)
+// - STOP opt-out instruction
+// - HELP info option
+// - Msg&data rates disclosure
+// ============================================================
 
-export async function sendAbsenceNotification(
+// First message sent to a new parent — opt-in confirmation
+export async function sendWelcomeSMS(
   parentPhone: string,
-  parentName: string,
-  studentName: string,
-  sessionDate: string,
-  sessionTime: string
+  parentName: string
 ) {
-  const date = new Date(sessionDate + 'T12:00:00').toLocaleDateString('en-CA', {
-    weekday: 'long', month: 'short', day: 'numeric'
-  })
-  const [h, m] = sessionTime.split(':').map(Number)
-  const suffix = h < 12 ? 'AM' : 'PM'
-  const displayH = h > 12 ? h - 12 : h
-  const time = `${displayH}:${String(m).padStart(2,'0')} ${suffix}`
-
-  const message = `Hi ${parentName}, this is Kumon Brookswood. ${studentName} was marked absent for their session on ${date} at ${time}. Please call us at (604) 245-2121 if you have any questions. - Kumon Brookswood`
+  const message = `Hi ${parentName}, you are now enrolled to receive session updates from Kumon Brookswood Learning Centre. Msg freq varies. ${OPT_OUT} Questions? Call (604) 245-2121.`
   return sendSMS(parentPhone, message)
 }
 
+// Day-of session reminder
 export async function sendSessionReminder(
   parentPhone: string,
   parentName: string,
@@ -68,18 +80,25 @@ export async function sendSessionReminder(
   sessionDate: string,
   sessionTime: string
 ) {
-  const date = new Date(sessionDate + 'T12:00:00').toLocaleDateString('en-CA', {
-    weekday: 'long', month: 'short', day: 'numeric'
-  })
-  const [h, m] = sessionTime.split(':').map(Number)
-  const suffix = h < 12 ? 'AM' : 'PM'
-  const displayH = h > 12 ? h - 12 : h
-  const time = `${displayH}:${String(m).padStart(2,'0')} ${suffix}`
-
-  const message = `Hi ${parentName}, reminder: ${studentName} has a Kumon session tomorrow (${date}) at ${time}. See you then! - Kumon Brookswood`
+  const { date, time } = formatDateTime(sessionDate, sessionTime)
+  const message = `Kumon Brookswood: Hi ${parentName}, ${studentName} has a session TODAY (${date}) at ${time}. See you soon! ${OPT_OUT}`
   return sendSMS(parentPhone, message)
 }
 
+// Absence notification
+export async function sendAbsenceNotification(
+  parentPhone: string,
+  parentName: string,
+  studentName: string,
+  sessionDate: string,
+  sessionTime: string
+) {
+  const { date, time } = formatDateTime(sessionDate, sessionTime)
+  const message = `Kumon Brookswood: Hi ${parentName}, ${studentName} was marked absent for their session on ${date} at ${time}. Questions? Call (604) 245-2121. ${OPT_OUT}`
+  return sendSMS(parentPhone, message)
+}
+
+// Session cancellation
 export async function sendCancellationSMS(
   parentPhone: string,
   parentName: string,
@@ -87,18 +106,12 @@ export async function sendCancellationSMS(
   sessionDate: string,
   sessionTime: string
 ) {
-  const date = new Date(sessionDate + 'T12:00:00').toLocaleDateString('en-CA', {
-    weekday: 'long', month: 'short', day: 'numeric'
-  })
-  const [h, m] = sessionTime.split(':').map(Number)
-  const suffix = h < 12 ? 'AM' : 'PM'
-  const displayH = h > 12 ? h - 12 : h
-  const time = `${displayH}:${String(m).padStart(2,'0')} ${suffix}`
-
-  const message = `Hi ${parentName}, ${studentName}'s session on ${date} at ${time} has been cancelled. You can book a makeup session at https://kumon-brookswood.vercel.app - Kumon Brookswood`
+  const { date, time } = formatDateTime(sessionDate, sessionTime)
+  const message = `Kumon Brookswood: Hi ${parentName}, ${studentName}'s session on ${date} at ${time} has been cancelled. Book a makeup at kumon-brookswood.vercel.app ${OPT_OUT}`
   return sendSMS(parentPhone, message)
 }
 
+// Makeup session confirmation
 export async function sendMakeupSMS(
   parentPhone: string,
   parentName: string,
@@ -106,14 +119,18 @@ export async function sendMakeupSMS(
   sessionDate: string,
   sessionTime: string
 ) {
-  const date = new Date(sessionDate + 'T12:00:00').toLocaleDateString('en-CA', {
-    weekday: 'long', month: 'short', day: 'numeric'
-  })
-  const [h, m] = sessionTime.split(':').map(Number)
-  const suffix = h < 12 ? 'AM' : 'PM'
-  const displayH = h > 12 ? h - 12 : h
-  const time = `${displayH}:${String(m).padStart(2,'0')} ${suffix}`
+  const { date, time } = formatDateTime(sessionDate, sessionTime)
+  const message = `Kumon Brookswood: Hi ${parentName}, ${studentName}'s makeup session is confirmed for ${date} at ${time}. See you then! ${OPT_OUT}`
+  return sendSMS(parentPhone, message)
+}
 
-  const message = `Hi ${parentName}, ${studentName}'s makeup session is confirmed for ${date} at ${time}. See you then! - Kumon Brookswood`
+// Check-out summary (future use)
+export async function sendCheckoutSummary(
+  parentPhone: string,
+  parentName: string,
+  studentName: string,
+  minutesSpent: number
+) {
+  const message = `Kumon Brookswood: Hi ${parentName}, ${studentName} has completed today's session (${minutesSpent} min). Great work! ${OPT_OUT}`
   return sendSMS(parentPhone, message)
 }
