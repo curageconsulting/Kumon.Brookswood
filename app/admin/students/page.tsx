@@ -139,9 +139,13 @@ export default function AdminStudentsPage() {
     const dur = getDuration(form.category, form.subjects)
 
     // Insert student
-    // Update parent phone if provided
+    // Update parent phone + auto-consent when admin enters number
     if (form.phone) {
-      await supabase.from('profiles').update({ phone: form.phone }).eq('id', parentProfile.id)
+      await supabase.from('profiles').update({
+        phone: form.phone,
+        sms_consent: true,
+        sms_consent_at: new Date().toISOString(),
+      }).eq('id', parentProfile.id)
     }
 
     const { data: student, error } = await supabase.from('students').insert({
