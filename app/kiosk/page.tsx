@@ -93,26 +93,30 @@ export default function KioskPage() {
 
   async function checkIn(sessionId: string, studentName: string) {
     setActionLoading(sessionId)
-    await fetch('/api/sessions/checkin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId })
-    })
+    const now = new Date().toISOString()
+    await supabase.from('sessions')
+      .update({ checked_in_at: now })
+      .eq('id', sessionId)
+    // Update local state immediately
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId ? { ...s, checked_in_at: now } : s
+    ))
     setRecentAction({ name: studentName, action: 'checked in' })
     setActionLoading(null)
-    load()
   }
 
   async function checkOut(sessionId: string, studentName: string) {
     setActionLoading(sessionId)
-    await fetch('/api/sessions/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId })
-    })
+    const now = new Date().toISOString()
+    await supabase.from('sessions')
+      .update({ checked_out_at: now })
+      .eq('id', sessionId)
+    // Update local state immediately
+    setSessions(prev => prev.map(s =>
+      s.id === sessionId ? { ...s, checked_out_at: now } : s
+    ))
     setRecentAction({ name: studentName, action: 'checked out' })
     setActionLoading(null)
-    load()
   }
 
   const checkedIn = sessions.filter(s => s.checked_in_at && !s.checked_out_at)
