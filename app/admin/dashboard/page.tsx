@@ -173,6 +173,7 @@ export default function AdminDashboard() {
             <Link href="/admin/teachers" className="text-white/70 hover:text-white">Teachers</Link>
             <Link href="/admin/schedules" className="text-white/70 hover:text-white">Schedules</Link>
             <Link href="/admin/capacity" className="text-white/70 hover:text-white">Capacity</Link>
+            <Link href="/admin/planning" className="text-white/70 hover:text-white">Planning</Link>
             <button onClick={signOut} className="text-white/50 hover:text-white ml-2">Sign out</button>
           </div>
         </div>
@@ -368,6 +369,7 @@ export default function AdminDashboard() {
               <Link href="/admin/teachers" className="flex items-center gap-2 text-sm text-slate-600 hover:text-[#009FE3] py-1">👩‍🏫 Teachers</Link>
               <Link href="/admin/schedules" className="flex items-center gap-2 text-sm text-slate-600 hover:text-[#009FE3] py-1">📅 Schedules</Link>
               <Link href="/admin/capacity" className="flex items-center gap-2 text-sm text-slate-600 hover:text-[#009FE3] py-1">📊 Capacity</Link>
+              <Link href="/admin/planning" className="flex items-center gap-2 text-sm text-slate-600 hover:text-[#009FE3] py-1">📋 Planning</Link>
             </div>
           </div>
         </div>
