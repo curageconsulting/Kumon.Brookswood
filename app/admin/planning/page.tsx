@@ -1,4 +1,4 @@
-"use client'
+'use client'
 // @ts-nocheck
 // ============================================================
 // ADMIN PLANNING — full instructor planning portal, ported from
@@ -14,8 +14,9 @@ const supabase = createClient()
 const ALL_DAYS_DL = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
 
 function rowToStudent(r: any) {
-  const mathDays = r.math_schedule_days || []
-  const readingDays = r.reading_schedule_days || []
+  const sd = r.schedule_days || {}
+  const mathDays = r.math_schedule_days || sd.math || []
+  const readingDays = r.reading_schedule_days || sd.reading || []
   return {
     id: r.id,
     kumonStudentId: r.kumon_student_id,
@@ -60,13 +61,13 @@ function studentToRow(s: any) {
     math_worksheet: s.mathWorksheet,
     math_class_ws: s.mathClassWS,
     math_homework_ws: s.mathHomeworkWS,
-    math_schedule_days: s.mathScheduleDays ?? [],
+
     reading_enabled: s.readingEnabled,
     reading_level: s.readingLevel,
     reading_worksheet: s.readingWorksheet,
     reading_class_ws: s.readingClassWS,
     reading_homework_ws: s.readingHomeworkWS,
-    reading_schedule_days: s.readingScheduleDays ?? [],
+    schedule_days: { math: s.mathScheduleDays ?? [], reading: s.readingScheduleDays ?? [] },
     kumon_money_per_sheet: s.kumonMoneyPerSheet,
   }
 }
@@ -141,6 +142,23 @@ async function saveSetting(key: string, value: any) {
   if (error) throw error
 }
 
+// ─── Goals (kumon_goals table) ──────────────────────────────────
+async function fetchGoals() {
+  const { data, error } = await supabase.from('kumon_goals').select('*').eq('status', 'active')
+  if (error) throw error
+  const out: any = {}
+  for (const g of (data || [])) out[g.student_id + ':' + g.subject] = g
+  return out
+}
+async function upsertGoal(goal: any) {
+  const { error } = await supabase.from('kumon_goals').upsert(goal)
+  if (error) throw error
+}
+async function removeGoal(id: string) {
+  const { error } = await supabase.from('kumon_goals').update({ status: 'done' }).eq('id', id)
+  if (error) throw error
+}
+
 
 // ─── Kumon level system (Math vs Reading differ) ───────────────
 const MATH_LEVELS = ["6A","5A","4A","3A","2A","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"];
@@ -188,6 +206,145 @@ function advancePos(level,ws,done,subject){ let w=ws+done,l=level; if(w>MAX_WS){
 function wsRange(level,from,done,subject){ if(!done) return `${level}${from}`; const items=getWsItems(level,from,done,subject); const last=items[items.length-1]; return `${level}${from}→${last.level}${last.wsNum}`; }
 function cycleScore(s){ const i=SCORE_CYCLE.indexOf(s); return i>=0&&i<SCORE_CYCLE.length-1?SCORE_CYCLE[i+1]:100; }
 function avgScore(scores){ if(!scores||!scores.length) return null; return Math.round(scores.reduce((a,b)=>a+b,0)/scores.length); }
+
+
+// ─── Standard Completion Time (SCT) — minutes per worksheet ─────
+// Source: Kumon SCT charts (Math 2022, Reading 2023). [min,max] per
+// worksheet decade (index 0 = WS 1-10 ... 19 = WS 191-200).
+// Not applicable: Math 6A-5A, Reading 7A-3A.
+const MATH_SCT = {"4A":[[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2]],"3A":[[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[0.5,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2]],"2A":[[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2]],"A":[[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[2,3],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[2,3]],"B":[[1,2],[1,2],[2,3],[2,3],[2,3],[2,3],[2,3],[2,4],[2,4],[3,5],[1,2],[2,3],[2,3],[2,3],[2,3],[2,4],[2,3],[2,4],[2,4],[3,5]],"C":[[2,3],[2,3],[2,3],[2,3],[2,3],[2,4],[2,4],[2,4],[2,4],[2,4],[3,5],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[3,4],[3,5]],"D":[[2,3],[2,4],[2,4],[3,4],[3,5],[2,4],[3,4],[3,4],[3,4],[3,5],[3,5],[3,5],[3,5],[3,5],[4,6],[3,5],[2,3],[2,3],[2,4],[2,4]],"E":[[2,3],[2,3],[3,4],[3,4],[3,4],[3,5],[3,5],[3,5],[3,5],[4,6],[3,4],[3,5],[3,5],[4,6],[3,4],[3,5],[3,5],[3,5],[3,5],[3,5]],"F":[[3,5],[3,5],[4,6],[3,5],[4,6],[4,6],[3,5],[3,5],[3,5],[4,6],[4,6],[4,6],[4,6],[3,5],[4,6],[4,6],[4,6],[5,7],[3,5],[3,5]],"G":[[3,5],[3,5],[2,4],[3,5],[3,5],[4,6],[3,5],[4,6],[4,6],[4,6],[4,6],[4,6],[3,5],[3,5],[4,6],[4,6],[3,5],[4,6],[4,6],[4,6]],"H":[[4,6],[4,6],[5,8],[5,8],[5,8],[5,8],[5,8],[6,10],[6,10],[6,8],[6,8],[5,7],[5,7],[5,7],[5,7],[4,6],[5,7],[5,7],[5,7],[5,7]],"I":[[4,6],[5,7],[5,7],[5,7],[5,7],[5,7],[5,7],[5,7],[4,6],[5,7],[5,7],[5,7],[5,7],[5,7],[6,8],[6,8],[6,8],[7,10],[7,10],[7,10]],"J":[[5,8],[5,8],[5,8],[6,10],[6,10],[7,12],[6,10],[5,8],[6,10],[5,8],[6,10],[6,10],[6,10],[6,10],[6,10],[6,10],[6,10],[6,10],[6,10],[7,12]],"K":[[4,6],[5,8],[6,12],[7,14],[7,14],[7,14],[8,16],[7,14],[7,14],[8,16],[6,12],[7,14],[7,14],[7,14],[8,16],[7,14],[8,16],[6,12],[7,14],[8,16]],"L":[[6,12],[7,14],[8,16],[8,16],[8,16],[12,24],[15,30],[15,30],[15,30],[15,30],[15,30],[8,16],[12,24],[12,24],[15,30],[15,30],[15,30],[15,30],[30,60],[30,60]],"M":[[10,20],[10,20],[15,30],[15,30],[15,30],[15,30],[15,30],[15,30],[10,20],[10,20],[10,20],[10,20],[10,20],[15,30],[15,30],[15,30],[15,30],[15,30],[15,30],[15,30]],"N":[[10,20],[10,20],[15,30],[15,30],[20,40],[20,40],[10,20],[15,30],[15,30],[15,30],[15,30],[15,30],[15,30],[20,40],[15,30],[15,30],[15,30],[15,30],[20,40],[25,50]],"O":[[20,40],[25,50],[25,50],[25,50],[25,50],[15,30],[15,30],[15,30],[20,40],[15,30],[15,30],[20,40],[25,50],[25,50],[25,50],[25,50],[25,50],[30,60],[30,60],[30,60]]};
+const READING_SCT = {"2A":[[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2],[1,2]],"AI":[[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3]],"AII":[[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3]],"BI":[[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3]],"BII":[[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3],[2,3]],"CI":[[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4]],"CII":[[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4]],"DI":[[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4]],"DII":[[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4],[2,4]],"EI":[[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4]],"EII":[[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4],[3,4]],"FI":[[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5]],"FII":[[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5],[3,5]],"GI":[[3,5],[3,5],[3,5],[3,5],[3,5],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6]],"GII":[[3,5],[3,5],[3,5],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,6],[4,7]],"HI":[[4,6],[4,6],[4,6],[4,6],[4,6],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7]],"HII":[[4,6],[4,6],[4,6],[4,6],[4,6],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[5,8]],"I-I":[[4,6],[4,6],[4,6],[4,6],[4,6],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7],[4,7]],"I-II":[[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8],[5,8]],"J":[[7,10],[7,10],[6,9],[7,10],[7,10],[4,6],[7,10],[7,10],[7,10],[7,10],[6,9],[7,10],[5,7],[7,10],[7,10],[7,10],[7,10],[7,10],[7,10],[4,6]],"K":[[7,10],[9,14],[9,14],[9,14],[7,10],[9,14],[9,14],[9,14],[7,10],[9,14],[9,14],[7,10],[9,14],[9,14],[9,14],[7,10],[9,14],[9,14],[9,14],[9,14]],"L":[[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14],[9,14]]};
+function sctFor(subject, level, ws) {
+  const chart = subject === "reading" ? READING_SCT : MATH_SCT;
+  let key = level;
+  if (subject === "reading" && !chart[key]) {
+    if (key === "I") key = "I-I";
+    else if (chart[key + "I"]) key = key + "I"; // plain A..H -> AI..HI
+  }
+  const rows = chart[key];
+  if (!rows) return null;
+  const idx = Math.min(19, Math.max(0, Math.floor(((ws || 1) - 1) / 10)));
+  return rows[idx];
+}
+function sctStatus(subject, level, ws, totalMinutes, done) {
+  const range = sctFor(subject, level, ws);
+  if (!range || !done || !totalMinutes || isNaN(totalMinutes)) return null;
+  const perWS = totalMinutes / done;
+  return { met: perWS <= range[1], fast: perWS < range[0], perWS, range };
+}
+function SctBadge({subject, level, ws, time, done}) {
+  const st = sctStatus(subject, level, ws, parseFloat(time), done);
+  if (!st) return null;
+  const c = st.met ? "#16a34a" : "#dc2626";
+  return (
+    <span style={{fontSize:11,fontWeight:700,color:c,background:st.met?"#f0fdf4":"#fef2f2",border:`1.5px solid ${c}33`,borderRadius:8,padding:"4px 9px",whiteSpace:"nowrap"}}>
+      {st.met ? (st.fast ? "⚡ Faster than SCT" : "✅ SCT met") : "⏱️ Over SCT"} · {st.perWS.toFixed(1)}m/WS (SCT {st.range[0]}–{st.range[1]})
+    </span>
+  );
+}
+
+
+// ─── Kumon Goal Setting & Communication Tool port ───────────────
+// Projection engine + KIS/ASHR milestones from the official xlsm.
+// Grade anchors = level the student completes by school-year end to
+// be "on standard" (KIS). ASHR1/2/3 = 1/2/3 ladder steps ahead.
+const MATH_KIS_ANCHOR = {"PK3":"5A","PK2":"4A","PK1":"3A","K":"2A",1:"A",2:"B",3:"C",4:"D",5:"E",6:"F",7:"G",8:"H",9:"I",10:"K",11:"M",12:"O"};
+const READ_KIS_ANCHOR = {"PK3":"5A","PK2":"4A","PK1":"3A","K":"2A",1:"AI",2:"BI",3:"CI",4:"DI",5:"EI",6:"FI",7:"GI",8:"HI",9:"I-I",10:"J",11:"K",12:"L"};
+const MILESTONE_BANDS = [
+  {ahead:3,label:"ASHR3",medal:"💎",color:"#7c3aed"},
+  {ahead:2,label:"ASHR2",medal:"🥇",color:"#d97706"},
+  {ahead:1,label:"ASHR1",medal:"🥈",color:"#64748b"},
+  {ahead:0,label:"KIS",medal:"🥉",color:"#b45309"},
+];
+function parseGrade(gradeText){
+  if (gradeText == null) return null;
+  const t = String(gradeText).trim().toUpperCase();
+  if (t.startsWith("PK") || t.includes("PRE")) return t.match(/\d/) ? "PK"+t.match(/\d/)[0] : "PK1";
+  if (t.startsWith("K")) return "K";
+  const n = parseInt(t.replace(/[^0-9]/g,""));
+  return isNaN(n) ? null : Math.min(12, Math.max(1, n));
+}
+function gradeAdvance(grade, years){
+  const order = ["PK3","PK2","PK1","K",1,2,3,4,5,6,7,8,9,10,11,12];
+  const i = order.indexOf(grade);
+  if (i < 0) return grade;
+  return order[Math.min(order.length-1, i + years)];
+}
+function gradeAtDate(baseGrade, date){
+  // School advance month: September
+  const now = new Date();
+  let years = date.getFullYear() - now.getFullYear();
+  if (date.getMonth() >= 8 && now.getMonth() < 8) years += 1;
+  else if (date.getMonth() < 8 && now.getMonth() >= 8) years -= 1;
+  return gradeAdvance(baseGrade, Math.max(0, years));
+}
+function milestoneFor(subject, grade, level){
+  if (grade == null) return null;
+  const anchors = subject === "reading" ? READ_KIS_ANCHOR : MATH_KIS_ANCHOR;
+  const seq = levelsFor(subject);
+  const anchor = anchors[grade];
+  if (!anchor) return null;
+  const ai = seq.indexOf(anchor), li = seq.indexOf(level);
+  if (ai < 0 || li < 0) return null;
+  const ahead = li - ai;
+  for (const b of MILESTONE_BANDS) if (ahead >= b.ahead) return {...b, ahead};
+  return null;
+}
+function studyToCalendarDays(studyDays, daysPerWeek){
+  // Port of the xlsm H28 formula: spread study days over a week schedule
+  if (daysPerWeek >= 7) return studyDays;
+  if (studyDays % daysPerWeek === 0) return (studyDays/daysPerWeek - 1)*7 + daysPerWeek;
+  return Math.floor(studyDays/daysPerWeek)*7 + (studyDays % daysPerWeek);
+}
+function buildProjection(subject, startLevel, startWs, wsPerDay, daysPerWeek, reps, baseGrade, maxLevels=14){
+  const seq = levelsFor(subject);
+  let i = seq.indexOf(startLevel);
+  if (i < 0 || !wsPerDay) return [];
+  const rows = []; let cum = 0;
+  const today = new Date();
+  for (let n = 0; i < seq.length && n < maxLevels; i++, n++) {
+    const level = seq[i];
+    const wsCount = n === 0 ? (MAX_WS - (startWs||1) + 1) : MAX_WS;
+    const r = reps[level] ?? 1;
+    const studyDays = Math.ceil((wsCount * r) / wsPerDay);
+    const calDays = studyToCalendarDays(studyDays, daysPerWeek);
+    cum += calDays;
+    const finish = new Date(today.getTime() + cum*86400000);
+    const grade = gradeAtDate(baseGrade, finish);
+    rows.push({ level, wsCount, reps: r, studyDays, calDays, cum, finish, grade,
+      milestone: milestoneFor(subject, grade, level) });
+  }
+  return rows;
+}
+
+// ─── Goal helpers ───────────────────────────────────────────────
+function wsDistance(fromLevel, fromWs, toLevel, toWs, subject){
+  const seq = levelsFor(subject);
+  const fi = seq.indexOf(fromLevel), ti = seq.indexOf(toLevel);
+  if (fi < 0 || ti < 0) return null;
+  return (ti - fi) * MAX_WS + (toWs - fromWs);
+}
+function daysLeft(targetDate){
+  if (!targetDate) return null;
+  const t = new Date(targetDate + "T23:59:00"), now = new Date();
+  return Math.max(0, Math.ceil((t - now) / 86400000));
+}
+function goalStats(goal, curLevel, curWs, subject){
+  if (!goal) return null;
+  const remaining = wsDistance(curLevel, curWs, goal.target_level, goal.target_worksheet, subject);
+  const total = wsDistance(goal.start_level, goal.start_worksheet, goal.target_level, goal.target_worksheet, subject);
+  const dl = daysLeft(goal.target_date);
+  const done = total != null && remaining != null ? total - remaining : null;
+  const pct = total ? Math.max(0, Math.min(100, Math.round((done / total) * 100))) : 0;
+  const perDay = remaining != null && dl ? Math.ceil(remaining / dl) : null;
+  return { remaining, total, done, pct, dl, perDay, reached: remaining != null && remaining <= 0 };
+}
+function GoalChip({goal, level, worksheet, subject, color}){
+  const g = goalStats(goal, level, worksheet, subject);
+  if (!g) return null;
+  if (g.reached) return <Tag c="#16a34a" bg="#f0fdf4">🎯 Goal {goal.target_level}{goal.target_worksheet} reached! 🎉</Tag>;
+  return <Tag c={color} bg={color+"14"}>🎯 {goal.target_level}{goal.target_worksheet} · {g.remaining} WS left{g.dl!=null?` · ${g.dl}d`:""}{g.perDay?` · ~${g.perDay}/day`:""}</Tag>;
+}
 
 function naturalizeComments(keywords, customComment) {
   const phrases = (keywords||[]).map(k=>k.replace(/^[\p{Emoji}\s]+/u,"").trim()).filter(Boolean).map(p=>p.charAt(0).toLowerCase()+p.slice(1));
@@ -240,6 +397,9 @@ export default function AdminPlanning() {
   const [selectedDate,setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [centerName,setCenterName] = useState("Kumon Learning Center");
   const [keywords,setKeywords] = useState(DEFAULT_KEYWORDS);
+  const [goals,setGoals] = useState({});
+  const [goalModal,setGoalModal] = useState(null); // {studentId, subject} | null
+  const [projModal,setProjModal] = useState(null); // {studentId, subject} | null
   const [sessionModal,setSessionModal] = useState(null);
   const [editModal,setEditModal] = useState(null);
   const [loading,setLoading] = useState(true);
@@ -256,6 +416,8 @@ export default function AdminPlanning() {
           fetchSetting('keywords', DEFAULT_KEYWORDS),
         ]);
         setStudents(studentsData); setCenterName(cn); setKeywords(kw);
+        try { setGoals(await fetchGoals()); }
+        catch(ge){ console.warn("Goals unavailable (run kumon_goals.sql):", ge.message); }
       } catch(e){ console.error(e); showToast("Failed to load data: "+e.message,"error"); }
       setLoading(false);
     })();
@@ -332,7 +494,7 @@ export default function AdminPlanning() {
 
       <div style={{background:"white",borderBottom:"1px solid #e2e8f0"}}>
         <div style={{maxWidth:700,margin:"0 auto",display:"flex"}}>
-          {[{id:"today",l:"Today",i:"📋"},{id:"students",l:"Students",i:"👥"},{id:"settings",l:"Settings",i:"⚙️"}].map(t=>(
+          {[{id:"today",l:"Today",i:"📋"},{id:"goals",l:"Goals",i:"🎯"},{id:"students",l:"Students",i:"👥"},{id:"settings",l:"Settings",i:"⚙️"}].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 4px 8px",border:"none",background:"transparent",color:tab===t.id?"#1e40af":"#94a3b8",borderBottom:tab===t.id?"3px solid #1e40af":"3px solid transparent",fontWeight:tab===t.id?700:500,fontSize:11,cursor:"pointer"}}>
               <div style={{fontSize:18}}>{t.i}</div><div style={{marginTop:2}}>{t.l}</div>
             </button>
@@ -348,8 +510,12 @@ export default function AdminPlanning() {
             <TodayTab
               classStudents={classStudents} allTodayStudents={todayStudents} todayDay={todayDay}
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-              getSession={getSession} onOpen={setSessionModal}
+              getSession={getSession} onOpen={setSessionModal} goals={goals}
             />
+          )}
+          {tab==="goals" && (
+            <GoalsTab students={students} goals={goals} onEdit={setGoalModal} onProject={setProjModal}
+              onRemove={async g=>{ try{ await removeGoal(g.id); const n={...goals}; delete n[g.student_id+':'+g.subject]; setGoals(n); showToast("Goal completed 🎉"); } catch(e){ showToast("Failed: "+e.message,"error"); } }} />
           )}
           {tab==="students" && (
             <StudentsTab students={students} onEdit={setEditModal} onReload={async(inc)=>{ try{ setStudents(await fetchStudents(inc)); } catch(e){ showToast("Reload failed: "+e.message,"error"); } }} />
@@ -362,7 +528,7 @@ export default function AdminPlanning() {
       </div>
 
       {sessionModal && openStudent && (
-        <SessionModal student={openStudent} session={openSession} keywords={keywords} centerName={centerName} date={selectedDate} todayDay={todayDay}
+        <SessionModal student={openStudent} session={openSession} keywords={keywords} centerName={centerName} date={selectedDate} todayDay={todayDay} goals={goals}
           onUpdate={patch=>updateLocalSession(sessionModal,patch)}
           onClose={advance=>saveSession(advance)}
           onCancel={()=>setSessionModal(null)}
@@ -389,12 +555,44 @@ export default function AdminPlanning() {
           onClose={()=>setEditModal(null)}
         />
       )}
+
+      {goalModal && (
+        <GoalModal
+          student={students.find(s=>s.id===goalModal.studentId)}
+          subject={goalModal.subject}
+          goal={goals[goalModal.studentId+':'+goalModal.subject]}
+          onSave={async data=>{
+            try {
+              await upsertGoal(data);
+              setGoals(prev=>({...prev, [data.student_id+':'+data.subject]: data}));
+              setGoalModal(null); showToast("🎯 Goal saved!");
+            } catch(e){ showToast("Save failed: "+e.message+(e.message?.includes("kumon_goals")?" — run kumon_goals.sql in Supabase":""),"error"); }
+          }}
+          onClose={()=>setGoalModal(null)}
+        />
+      )}
+
+      {projModal && (
+        <ProjectionModal
+          student={students.find(s=>s.id===projModal.studentId)}
+          subject={projModal.subject}
+          showToast={showToast}
+          onSetGoal={async data=>{
+            try {
+              await upsertGoal(data);
+              setGoals(prev=>({...prev, [data.student_id+':'+data.subject]: data}));
+              showToast(`🎯 Goal set: complete ${data.target_level} by ${data.target_date}`);
+            } catch(e){ showToast("Goal failed: "+e.message,"error"); }
+          }}
+          onClose={()=>setProjModal(null)}
+        />
+      )}
     </div>
   );
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -431,14 +629,14 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
           </div>
         ) : (
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:homeworkOnly.length>0?20:0}}>
-            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay/>)}
+            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay goals={goals}/>)}
           </div>
         )}
 
         {homeworkOnly.length>0 && <>
           <SectionLabel label={`📝 Homework Day (${todayDay})`} sub={`${homeworkOnly.length} students`} />
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false}/>)}
+            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false} goals={goals}/>)}
           </div>
         </>}
       </>}
@@ -489,9 +687,16 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen}) {
                   {s.readingEnabled ? `${s.readingLevel}${s.readingWorksheet}${rDone>0?` → ${wsRange(sess.reading.fromLevel||s.readingLevel,sess.reading.fromWorksheet||s.readingWorksheet,rDone,"reading").split("→")[1]}`:""} ${rPlanned!=null?`(plan ${rPlanned})`:""}` : "—"}
                 </td>
                 <td style={{ padding:"8px 10px", textAlign:"center" }}>
-                  {!sess.hasOwnProperty("present") ? <span style={{color:"#cbd5e1"}}>—</span> :
-                   !sess.present ? <span style={{color:"#dc2626",fontWeight:700}}>Absent</span> :
-                   <span style={{color:"#16a34a",fontWeight:700}}>✓ {mDone+rDone}WS</span>}
+                  {(() => {
+                    if (!sess.hasOwnProperty("present")) return <span style={{color:"#cbd5e1"}}>—</span>;
+                    if (!sess.present) return <span style={{color:"#dc2626",fontWeight:700}}>Absent</span>;
+                    const sctChecks = [];
+                    if (mDone>0 && sess.math?.timeMinutes) sctChecks.push(sctStatus("math", sess.math.fromLevel||s.mathLevel, sess.math.fromWorksheet||s.mathWorksheet, parseFloat(sess.math.timeMinutes), mDone));
+                    if (rDone>0 && sess.reading?.timeMinutes) sctChecks.push(sctStatus("reading", sess.reading.fromLevel||s.readingLevel, sess.reading.fromWorksheet||s.readingWorksheet, parseFloat(sess.reading.timeMinutes), rDone));
+                    const valid = sctChecks.filter(Boolean);
+                    const sctIcon = !valid.length ? "" : valid.every(c=>c.met) ? " ⏱️✅" : " ⏱️🔴";
+                    return <span style={{color:"#16a34a",fontWeight:700}} title={valid.length?(valid.every(c=>c.met)?"Within SCT":"Over SCT"):""}>✓ {mDone+rDone}WS{sctIcon}</span>;
+                  })()}
                 </td>
                 <td style={{ padding:"8px 10px", textAlign:"center", fontWeight:800, color:"#7c3aed" }}>{money>0?`$${money}`:"—"}</td>
               </tr>
@@ -503,7 +708,7 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen}) {
   );
 }
 
-function StudentCard({student,session,todayDay,onOpen,isClassDay}) {
+function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={}}) {
   const mDone=session.math?.done||0, rDone=session.reading?.done||0, total=mDone+rDone;
   const isPresent=session.present, isTouched=session.hasOwnProperty("present");
   const money=session.kumonMoney ?? calcTaskMoney(session.moneyTasks);
@@ -524,6 +729,10 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay}) {
           {student.mathEnabled&&<LevelBadge subject={mathToday?"Math":"Math (HW)"} level={student.mathLevel} worksheet={student.mathWorksheet} color="#3b82f6"/>}
           {student.readingEnabled&&<LevelBadge subject={readToday?"Read":"Read (HW)"} level={student.readingLevel} worksheet={student.readingWorksheet} color="#ec4899"/>}
         </div>
+        <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+          {student.mathEnabled&&<GoalChip goal={goals[student.id+':math']} level={student.mathLevel} worksheet={student.mathWorksheet} subject="math" color="#3b82f6"/>}
+          {student.readingEnabled&&<GoalChip goal={goals[student.id+':reading']} level={student.readingLevel} worksheet={student.readingWorksheet} subject="reading" color="#ec4899"/>}
+        </div>
         {total>0&&<div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
           {mDone>0&&mAvg!=null&&<Tag c="#3b82f6" bg="#eff6ff">📐 {mDone}WS · {mAvg}%</Tag>}
           {rDone>0&&rAvg!=null&&<Tag c="#ec4899" bg="#fdf2f8">📖 {rDone}WS · {rAvg}%</Tag>}
@@ -540,7 +749,7 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay}) {
 }
 
 // ─── Session Modal ─────────────────────────────────────────────
-function SessionModal({student,session:s,keywords,centerName,date,todayDay,onUpdate,onClose,onCancel}) {
+function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},onUpdate,onClose,onCancel}) {
   const [showMsg,setShowMsg]=useState(false),[copied,setCopied]=useState(false);
   useEffect(()=>{
     if(!s.hasOwnProperty("present")) onUpdate({
@@ -597,6 +806,49 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,onUpd
             {student.mathEnabled&&<SubjectSection subject="Math" emoji="📐" color="#3b82f6" level={student.mathLevel} worksheet={student.mathWorksheet} data={m} onUpdate={updMath} dayType={mathToday?"Class day":"Homework day"} plannedWS={mathToday?student.mathClassWS:student.mathHomeworkWS}/>}
             {student.readingEnabled&&<SubjectSection subject="Reading" emoji="📖" color="#ec4899" level={student.readingLevel} worksheet={student.readingWorksheet} data={r} onUpdate={updRead} dayType={readToday?"Class day":"Homework day"} plannedWS={readToday?student.readingClassWS:student.readingHomeworkWS}/>}
 
+            {(() => {
+              const checks = [];
+              if (student.mathEnabled && (m.done||0)>0 && m.timeMinutes) checks.push(sctStatus("math", m.fromLevel||student.mathLevel, m.fromWorksheet||student.mathWorksheet, parseFloat(m.timeMinutes), m.done));
+              if (student.readingEnabled && (r.done||0)>0 && r.timeMinutes) checks.push(sctStatus("reading", r.fromLevel||student.readingLevel, r.fromWorksheet||student.readingWorksheet, parseFloat(r.timeMinutes), r.done));
+              const valid = checks.filter(Boolean);
+              if (!valid.length || moneyTasks.sct || !valid.every(c=>c.met)) return null;
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:10,background:"#f0fdf4",border:"1.5px solid #86efac",borderRadius:10,padding:"9px 12px",marginBottom:12}}>
+                  <span style={{flex:1,fontSize:12,color:"#15803d",fontWeight:700}}>⏱️ All worksheets within SCT!</span>
+                  <button onClick={()=>onUpdate({moneyTasks:{...moneyTasks,sct:true},kumonMoney:undefined})} style={{border:"none",background:"#16a34a",color:"white",borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+$10 SCT</button>
+                </div>
+              );
+            })()}
+            {(() => {
+              const plannedM = student.mathEnabled ? (mathToday?student.mathClassWS:student.mathHomeworkWS) || 0 : 0;
+              const plannedR = student.readingEnabled ? (readToday?student.readingClassWS:student.readingHomeworkWS) || 0 : 0;
+              const extraCount = Math.max(0,(m.done||0)-plannedM) + Math.max(0,(r.done||0)-plannedR);
+              if (extraCount<=0 || moneyTasks.extraWork) return null;
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:10,background:"#fff7ed",border:"1.5px solid #fdba74",borderRadius:10,padding:"9px 12px",marginBottom:12}}>
+                  <span style={{flex:1,fontSize:12,color:"#c2410c",fontWeight:700}}>💪 {extraCount} WS beyond plan — extra work!</span>
+                  <button onClick={()=>onUpdate({moneyTasks:{...moneyTasks,extraWork:true},kumonMoney:undefined})} style={{border:"none",background:"#ea580c",color:"white",borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+$5 Extra Work</button>
+                </div>
+              );
+            })()}
+            {(() => {
+              const mg = student.mathEnabled && goals[student.id+':math'];
+              const rg = student.readingEnabled && goals[student.id+':reading'];
+              if (!mg && !rg) return null;
+              const chip = (goal, level, ws, done, subject, color, label) => {
+                if (!goal) return null;
+                const after = advancePos(level, ws, done||0, subject);
+                const g = goalStats(goal, after.level, after.worksheet, subject);
+                if (!g) return null;
+                return <span key={subject} style={{fontSize:11,fontWeight:700,color:g.reached?"#16a34a":color,background:(g.reached?"#16a34a":color)+"14",borderRadius:8,padding:"4px 9px"}}>{label} 🎯 {g.reached?"Goal reached! 🎉":`${g.remaining} WS to ${goal.target_level}${goal.target_worksheet}${g.dl!=null?` · ${g.dl}d`:""}`}</span>;
+              };
+              return (
+                <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                  {chip(mg, student.mathLevel, student.mathWorksheet, m.done, "math", "#3b82f6", "📐")}
+                  {chip(rg, student.readingLevel, student.readingWorksheet, r.done, "reading", "#ec4899", "📖")}
+                </div>
+              );
+            })()}
             <SectionLabel label="Kumon Money 💰" sub={`Total: $${money}${s.kumonMoney!==undefined&&s.kumonMoney!==autoMoney?" (manual)":""}`}/>
             <div style={{ background:"#faf5ff", borderRadius:10, padding:"10px 12px", marginBottom:16 }}>
               <div style={{ display:"flex", flexDirection:"column", gap:6, marginBottom:10 }}>
@@ -691,10 +943,11 @@ function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayTy
         </div>
       </div>
       {done>0&&<>
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:"white",borderRadius:8,padding:"8px 12px",border:"1.5px solid #e2e8f0"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:"white",borderRadius:8,padding:"8px 12px",border:"1.5px solid #e2e8f0",flexWrap:"wrap"}}>
           <span style={{fontSize:13,color:"#64748b",fontWeight:600}}>⏱️ Time</span>
-          <input type="number" value={time} onChange={e=>onUpdate({timeMinutes:e.target.value})} placeholder="0.0" min={0} step={0.1} style={{flex:1,border:"none",textAlign:"right",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none",background:"transparent",maxWidth:70}}/>
-          <span style={{fontSize:13,color:"#94a3b8",fontWeight:600}}>min</span>
+          <input type="number" value={time} onChange={e=>onUpdate({timeMinutes:e.target.value})} placeholder="0.0" min={0} step={0.1} style={{flex:1,border:"none",textAlign:"right",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none",background:"transparent",maxWidth:70,minWidth:50}}/>
+          <span style={{fontSize:13,color:"#94a3b8",fontWeight:600}}>min total</span>
+          <SctBadge subject={subjectKey} level={fromLevel} ws={fromWs} time={time} done={done}/>
         </div>
         <div style={{marginBottom:10}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
@@ -720,6 +973,216 @@ function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayTy
           ))}
         </div>
       </>}
+    </div>
+  );
+}
+
+
+
+// ─── Projection Modal — port of the Goal Setting & Communication Tool ──
+function ProjectionModal({student,subject,onSetGoal,onClose,showToast}) {
+  const isMath = subject === "math";
+  const curLevel = isMath ? student.mathLevel : student.readingLevel;
+  const curWs = isMath ? student.mathWorksheet : student.readingWorksheet;
+  const color = isMath ? "#3b82f6" : "#ec4899";
+  const settingKey = `projection_${student.id}_${subject}`;
+  const [wsPerDay,setWsPerDay] = useState(5);
+  const [daysPerWeek,setDaysPerWeek] = useState(7);
+  const [reps,setReps] = useState({});
+  const [loaded,setLoaded] = useState(false);
+  useEffect(()=>{ (async()=>{
+    try { const p = await fetchSetting(settingKey, null);
+      if (p) { setWsPerDay(p.wsPerDay||5); setDaysPerWeek(p.daysPerWeek||7); setReps(p.reps||{}); } }
+    catch(e){ console.warn(e); }
+    setLoaded(true);
+  })(); },[]);
+  const baseGrade = parseGrade(student.grade);
+  const rows = buildProjection(subject, curLevel, curWs, wsPerDay, daysPerWeek, reps, baseGrade);
+  const fmtD = d => d.toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"2-digit"});
+  const cycleReps = lvl => setReps(p=>({...p,[lvl]: ((p[lvl]??1) % 3) + 1 }));
+  const save = async()=>{ try{ await saveSetting(settingKey,{wsPerDay,daysPerWeek,reps}); showToast("📈 Projection saved!"); }catch(e){ showToast("Save failed: "+e.message,"error"); } };
+  const Counter = ({v,set,min,max,label}) => (
+    <div style={{flex:1,background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+      <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>{label}</div>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <CounterBtn size={28} onClick={()=>set(Math.max(min,v-1))}>−</CounterBtn>
+        <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:18,color:"#1e293b"}}>{v}</span>
+        <CounterBtn size={28} onClick={()=>set(Math.min(max,v+1))}>+</CounterBtn>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",maxHeight:"92vh",overflowY:"auto",paddingBottom:28}}>
+        <div style={{padding:"12px 16px",position:"sticky",top:0,background:"white",zIndex:10,borderBottom:"1px solid #f1f5f9",borderRadius:"20px 20px 0 0"}}>
+          <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 10px"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div>
+              <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>📈 {isMath?"Math":"Reading"} Projection</div>
+              <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{student.name} · from <b style={{color}}>{curLevel}{curWs}</b>{baseGrade!=null&&<> · Grade {baseGrade}</>}</div>
+            </div>
+            <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:16}}>✕</button>
+          </div>
+        </div>
+        <div style={{padding:16}}>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <Counter v={wsPerDay} set={setWsPerDay} min={1} max={30} label="WORKSHEETS / DAY"/>
+            <Counter v={daysPerWeek} set={setDaysPerWeek} min={1} max={7} label="STUDY DAYS / WEEK"/>
+          </div>
+          <div style={{fontSize:10,color:"#94a3b8",marginBottom:10}}>Tap a Reps value to cycle 1→2→3 (how many times the level is repeated). Tap 🎯 to set that level's completion as the goal.</div>
+          {!loaded ? <div style={{textAlign:"center",padding:30,color:"#94a3b8"}}>Loading…</div> : (
+          <div style={{background:"white",border:"1px solid #e2e8f0",borderRadius:12,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{background:"#1e3a8a",color:"white"}}>
+                <th style={{padding:"7px 8px",textAlign:"left"}}>Level</th>
+                <th style={{padding:"7px 6px"}}>WS</th>
+                <th style={{padding:"7px 6px"}}>Reps</th>
+                <th style={{padding:"7px 6px"}}>Days</th>
+                <th style={{padding:"7px 8px",textAlign:"left"}}>Finish</th>
+                <th style={{padding:"7px 6px"}}>Honor</th>
+                <th style={{padding:"7px 4px"}}></th>
+              </tr></thead>
+              <tbody>
+                {rows.map((row,idx)=>(
+                  <tr key={row.level} style={{borderBottom:"1px solid #f1f5f9",background:idx===0?color+"0a":"white"}}>
+                    <td style={{padding:"7px 8px",fontWeight:800,color}}>{row.level}</td>
+                    <td style={{padding:"7px 6px",textAlign:"center",color:"#64748b"}}>{row.wsCount}</td>
+                    <td onClick={()=>cycleReps(row.level)} style={{padding:"7px 6px",textAlign:"center",cursor:"pointer",fontWeight:800,color:row.reps>1?"#ea580c":"#94a3b8",background:row.reps>1?"#fff7ed":"transparent"}}>×{row.reps}</td>
+                    <td style={{padding:"7px 6px",textAlign:"center",color:"#64748b"}} title={`${row.studyDays} study days`}>{row.cum}</td>
+                    <td style={{padding:"7px 8px",fontWeight:700,color:"#1e293b",whiteSpace:"nowrap"}}>{fmtD(row.finish)} <span style={{fontSize:9,color:"#94a3b8"}}>Gr {row.grade}</span></td>
+                    <td style={{padding:"7px 6px",textAlign:"center"}}>{row.milestone && <span title={`${row.milestone.label} — ${row.milestone.ahead} level(s) ahead of grade`} style={{fontSize:13}}>{row.milestone.medal}</span>}</td>
+                    <td style={{padding:"7px 4px",textAlign:"center"}}>
+                      <button onClick={()=>onSetGoal({
+                          id:`g_${student.id}_${subject}`, student_id:student.id, subject,
+                          target_level:row.level, target_worksheet:200,
+                          target_date:row.finish.toISOString().split("T")[0],
+                          start_level:curLevel, start_worksheet:curWs, status:'active'
+                        })} style={{border:"none",background:"transparent",cursor:"pointer",fontSize:13}} title="Set as goal">🎯</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>)}
+          <div style={{display:"flex",gap:4,flexWrap:"wrap",margin:"10px 0 14px",fontSize:10,color:"#64748b"}}>
+            {MILESTONE_BANDS.slice().reverse().map(b=><span key={b.label} style={{background:"#f8fafc",borderRadius:6,padding:"3px 8px"}}>{b.medal} {b.label} = {b.ahead===0?"on grade standard":`${b.ahead} ahead`}</span>)}
+          </div>
+          <button onClick={save} style={{width:"100%",padding:"13px",border:"none",background:"linear-gradient(135deg,#1e40af,#5b21b6)",color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>💾 Save Projection Settings</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Goals Tab — set targets & track daily distance ─────────────
+function GoalsTab({students,goals,onEdit,onRemove,onProject}) {
+  const active = students.filter(s=>s.status!=="inactive");
+  return (
+    <div>
+      <div style={{background:"#fefce8",border:"1.5px solid #fde68a",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#92400e",marginBottom:12,lineHeight:1.6}}>
+        🎯 Set a target level + worksheet + date per subject. Progress updates automatically as students advance — each card shows worksheets left, days left, and the pace needed.
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {active.map(s=>(
+          <div key={s.id} style={{background:"white",borderRadius:12,padding:"13px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:sColor(s.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:12,flexShrink:0}}>{initials(s.name)}</div>
+              <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{s.name}</div>
+            </div>
+            {[s.mathEnabled&&{sub:"math",label:"📐 Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet},
+              s.readingEnabled&&{sub:"reading",label:"📖 Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet}]
+              .filter(Boolean).map(({sub,label,color,level,ws})=>{
+              const goal = goals[s.id+':'+sub];
+              const g = goalStats(goal, level, ws, sub);
+              return (
+                <div key={sub} style={{background:"#f8fafc",borderRadius:9,padding:"9px 11px",marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={{fontSize:12,fontWeight:700,color,minWidth:78}}>{label}</span>
+                    <span style={{fontSize:11,color:"#64748b"}}>Now: <b>{level}{ws}</b></span>
+                    {goal ? <>
+                      <span style={{fontSize:11,color:"#64748b"}}>→ Goal: <b>{goal.target_level}{goal.target_worksheet}</b>{goal.target_date?` by ${goal.target_date}`:""}</span>
+                      <span style={{marginLeft:"auto",display:"flex",gap:5}}>
+                        <button onClick={()=>onProject({studentId:s.id,subject:sub})} style={{border:"none",background:"#faf5ff",color:"#7c3aed",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>📈</button>
+                        <button onClick={()=>onEdit({studentId:s.id,subject:sub})} style={{border:"none",background:"#eff6ff",color:"#1d4ed8",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>Edit</button>
+                        <button onClick={()=>onRemove(goal)} style={{border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Done</button>
+                      </span>
+                    </> : (
+                      <span style={{marginLeft:"auto",display:"flex",gap:5}}>
+                        <button onClick={()=>onProject({studentId:s.id,subject:sub})} style={{border:"none",background:"#faf5ff",color:"#7c3aed",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>📈</button>
+                        <button onClick={()=>onEdit({studentId:s.id,subject:sub})} style={{border:"1.5px dashed #cbd5e1",background:"white",color:"#64748b",borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Set goal</button>
+                      </span>
+                    )}
+                  </div>
+                  {g && !g.reached && <>
+                    <div style={{height:7,background:"#e2e8f0",borderRadius:4,marginTop:8,overflow:"hidden"}}>
+                      <div style={{height:"100%",width:g.pct+"%",background:color,borderRadius:4,transition:"width 0.3s"}}/>
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:10,color:"#64748b",fontWeight:600}}>
+                      <span>{g.pct}% · {g.done}/{g.total} WS</span>
+                      <span style={{color:g.dl!=null&&g.perDay>3?"#dc2626":"#64748b"}}>{g.remaining} WS left{g.dl!=null?` · ${g.dl} days`:""}{g.perDay?` · needs ~${g.perDay}/day`:""}</span>
+                    </div>
+                  </>}
+                  {g && g.reached && <div style={{marginTop:6,fontSize:11,fontWeight:700,color:"#16a34a"}}>🎉 Goal reached — mark Done to celebrate & set the next one!</div>}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Goal Modal ─────────────────────────────────────────────────
+function GoalModal({student,subject,goal,onSave,onClose}) {
+  const isMath = subject==="math";
+  const seq = levelsFor(subject);
+  const curLevel = isMath ? student.mathLevel : student.readingLevel;
+  const curWs = isMath ? student.mathWorksheet : student.readingWorksheet;
+  const defDate = () => { const d=new Date(); d.setMonth(d.getMonth()+1); return d.toISOString().split("T")[0]; };
+  const [f,setF]=useState({
+    target_level: goal?.target_level || curLevel,
+    target_worksheet: goal?.target_worksheet || Math.min(MAX_WS, curWs+50),
+    target_date: goal?.target_date || defDate(),
+  });
+  const preview = wsDistance(curLevel, curWs, f.target_level, f.target_worksheet, subject);
+  const dl = daysLeft(f.target_date);
+  const valid = preview != null && preview > 0;
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 30px"}}>
+        <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
+        <div style={{fontWeight:800,fontSize:16,color:"#1e293b",marginBottom:2}}>🎯 {goal?"Edit":"Set"} {isMath?"Math":"Reading"} Goal</div>
+        <div style={{fontSize:12,color:"#64748b",marginBottom:14}}>{student.name} · currently at <b>{curLevel}{curWs}</b></div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1.3fr",gap:8,marginBottom:12}}>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#475569",display:"block",marginBottom:5}}>Target Level</label>
+            <select value={f.target_level} onChange={e=>setF(p=>({...p,target_level:e.target.value}))} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 8px",fontSize:13,background:"white"}}>{seq.map(l=><option key={l}>{l}</option>)}</select>
+          </div>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#475569",display:"block",marginBottom:5}}>Target WS</label>
+            <input type="number" min={1} max={200} value={f.target_worksheet} onChange={e=>setF(p=>({...p,target_worksheet:Math.max(1,Math.min(MAX_WS,parseInt(e.target.value)||1))}))} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"9px 8px",fontSize:13,boxSizing:"border-box",outline:"none"}}/>
+          </div>
+          <div>
+            <label style={{fontSize:10,fontWeight:700,color:"#475569",display:"block",marginBottom:5}}>Target Date</label>
+            <input type="date" value={f.target_date} onChange={e=>setF(p=>({...p,target_date:e.target.value}))} style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:8,padding:"8px",fontSize:13,boxSizing:"border-box",outline:"none"}}/>
+          </div>
+        </div>
+        <div style={{background:valid?"#eff6ff":"#fef2f2",borderRadius:9,padding:"9px 12px",fontSize:12,color:valid?"#1e40af":"#dc2626",fontWeight:600,marginBottom:14}}>
+          {valid ? <>📏 {preview} worksheets from today{dl!=null?` · ${dl} days`:""}{dl?` · ~${Math.ceil(preview/Math.max(1,dl))}/day needed`:""}</> : "Target must be ahead of the current position"}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={onClose} style={{padding:"12px 18px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>Cancel</button>
+          <button onClick={()=>valid&&onSave({
+              id: goal?.id || `g_${student.id}_${subject}`,
+              student_id: student.id, subject,
+              target_level: f.target_level, target_worksheet: f.target_worksheet, target_date: f.target_date,
+              start_level: goal?.start_level || curLevel, start_worksheet: goal?.start_worksheet || curWs,
+              status: 'active',
+            })}
+            style={{flex:1,padding:"12px",border:"none",background:valid?"linear-gradient(135deg,#1e40af,#5b21b6)":"#e2e8f0",color:valid?"white":"#94a3b8",borderRadius:10,fontWeight:700,fontSize:14,cursor:valid?"pointer":"default"}}>Save Goal</button>
+        </div>
+      </div>
     </div>
   );
 }
