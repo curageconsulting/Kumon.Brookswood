@@ -1,4 +1,4 @@
-'use client'
+"use client'
 // @ts-nocheck
 // ============================================================
 // ADMIN PLANNING — full instructor planning portal, ported from
