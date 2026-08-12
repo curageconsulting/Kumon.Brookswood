@@ -471,6 +471,18 @@ export default function AdminPlanning() {
   const openStudent = students.find(s=>s.id===sessionModal);
   const openSession = sessionModal ? getSession(sessionModal) : {};
 
+  const shiftSessionDate = async (n) => {
+    const sid = sessionModal;
+    const sess = sid ? getSession(sid) : null;
+    if (sid && sess && sess.hasOwnProperty("present")) {
+      try { await upsertSession(sid, selectedDate, sess); }
+      catch(e){ showToast("Save failed: "+e.message,"error"); return; }
+    }
+    const d = new Date(selectedDate+"T12:00:00"); d.setDate(d.getDate()+n);
+    setSelectedDate(d.toISOString().split("T")[0]);
+    if (sid) showToast("✅ Saved — switched day");
+  };
+
   const saveSession = async (advance) => {
     const sid = sessionModal;
     const sess = getSession(sid);
@@ -560,6 +572,7 @@ export default function AdminPlanning() {
       {sessionModal && openStudent && (
         <SessionModal student={openStudent} session={openSession} keywords={keywords} centerName={centerName} date={selectedDate} todayDay={todayDay} goals={goals}
           plan={{math:plans[planKey(openStudent.id,"math",selectedDate)],reading:plans[planKey(openStudent.id,"reading",selectedDate)]}}
+          onShiftDate={shiftSessionDate}
           onUpdate={patch=>updateLocalSession(sessionModal,patch)}
           onClose={advance=>saveSession(advance)}
           onCancel={()=>setSessionModal(null)}
@@ -802,7 +815,7 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={
 }
 
 // ─── Session Modal ─────────────────────────────────────────────
-function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},plan={},onUpdate,onClose,onCancel}) {
+function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},plan={},onShiftDate,onUpdate,onClose,onCancel}) {
   const [showMsg,setShowMsg]=useState(false),[copied,setCopied]=useState(false);
   useEffect(()=>{
     if(!s.hasOwnProperty("present")) onUpdate({
@@ -810,7 +823,7 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
       math:{done:0,fromLevel:plan.math?.level||student.mathLevel,fromWorksheet:plan.math?.start_ws||student.mathWorksheet,scores:[],circled:[],corrections:"none",timeMinutes:""},
       reading:{done:0,fromLevel:plan.reading?.level||student.readingLevel,fromWorksheet:plan.reading?.start_ws||student.readingWorksheet,scores:[],circled:[],corrections:"none",timeMinutes:""},
     });
-  },[]);
+  },[date]);
 
   const present=s.present??true;
   const m=s.math||{done:0,scores:[],corrections:"none"};
@@ -840,7 +853,11 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
               <div style={{display:"flex",gap:6,marginTop:4,flexWrap:"wrap"}}>
                 {student.mathEnabled&&<LevelBadge subject="Math" level={student.mathLevel} worksheet={student.mathWorksheet} color="#3b82f6"/>}
                 {student.readingEnabled&&<LevelBadge subject="Read" level={student.readingLevel} worksheet={student.readingWorksheet} color="#ec4899"/>}
-                <span style={{fontSize:11,color:"#94a3b8"}}>{new Date(date+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"})}</span>
+                <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                  <button onClick={()=>onShiftDate&&onShiftDate(-1)} style={{border:"none",background:"#f1f5f9",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:12,fontWeight:800,color:"#475569"}}>‹</button>
+                  <span style={{fontSize:11,color:"#475569",fontWeight:700,whiteSpace:"nowrap"}}>{new Date(date+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"})}</span>
+                  <button onClick={()=>onShiftDate&&onShiftDate(1)} style={{border:"none",background:"#f1f5f9",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:12,fontWeight:800,color:"#475569"}}>›</button>
+                </span>
               </div>
             </div>
             <button onClick={onCancel} style={{marginLeft:"auto",border:"none",background:"#f1f5f9",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:16}}>✕</button>
