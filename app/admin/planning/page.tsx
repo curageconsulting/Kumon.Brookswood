@@ -159,6 +159,25 @@ async function removeGoal(id: string) {
   if (error) throw error
 }
 
+// ─── Worksheet Plans (kumon_plans table) ────────────────────────
+function planKey(studentId: string, subject: string, date: string) { return `${studentId}|${subject}|${date}` }
+async function fetchPlansRange(fromDate: string, toDate: string) {
+  const { data, error } = await supabase.from('kumon_plans').select('*')
+    .gte('plan_date', fromDate).lte('plan_date', toDate)
+  if (error) throw error
+  const out: any = {}
+  for (const p of (data || [])) out[planKey(p.student_id, p.subject, p.plan_date)] = p
+  return out
+}
+async function upsertPlans(rows: any[]) {
+  const { error } = await supabase.from('kumon_plans').upsert(rows)
+  if (error) throw error
+}
+async function deletePlan(id: string) {
+  const { error } = await supabase.from('kumon_plans').delete().eq('id', id)
+  if (error) throw error
+}
+
 
 // ─── Kumon level system (Math vs Reading differ) ───────────────
 const MATH_LEVELS = ["6A","5A","4A","3A","2A","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"];
@@ -400,6 +419,8 @@ export default function AdminPlanning() {
   const [goals,setGoals] = useState({});
   const [goalModal,setGoalModal] = useState(null); // {studentId, subject} | null
   const [projModal,setProjModal] = useState(null); // {studentId, subject} | null
+  const [plans,setPlans] = useState({});
+  const [planModal,setPlanModal] = useState(null); // studentId | null
   const [sessionModal,setSessionModal] = useState(null);
   const [editModal,setEditModal] = useState(null);
   const [loading,setLoading] = useState(true);
@@ -418,6 +439,11 @@ export default function AdminPlanning() {
         setStudents(studentsData); setCenterName(cn); setKeywords(kw);
         try { setGoals(await fetchGoals()); }
         catch(ge){ console.warn("Goals unavailable (run kumon_goals.sql):", ge.message); }
+        try {
+          const d0 = new Date(); d0.setDate(d0.getDate()-7);
+          const d1 = new Date(); d1.setDate(d1.getDate()+28);
+          setPlans(await fetchPlansRange(d0.toISOString().split("T")[0], d1.toISOString().split("T")[0]));
+        } catch(pe){ console.warn("Plans unavailable (run kumon_plans.sql):", pe.message); }
       } catch(e){ console.error(e); showToast("Failed to load data: "+e.message,"error"); }
       setLoading(false);
     })();
@@ -494,7 +520,7 @@ export default function AdminPlanning() {
 
       <div style={{background:"white",borderBottom:"1px solid #e2e8f0"}}>
         <div style={{maxWidth:700,margin:"0 auto",display:"flex"}}>
-          {[{id:"today",l:"Today",i:"📋"},{id:"goals",l:"Goals",i:"🎯"},{id:"students",l:"Students",i:"👥"},{id:"settings",l:"Settings",i:"⚙️"}].map(t=>(
+          {[{id:"today",l:"Today",i:"📋"},{id:"plan",l:"Plan",i:"📅"},{id:"goals",l:"Goals",i:"🎯"},{id:"students",l:"Students",i:"👥"},{id:"settings",l:"Settings",i:"⚙️"}].map(t=>(
             <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"10px 4px 8px",border:"none",background:"transparent",color:tab===t.id?"#1e40af":"#94a3b8",borderBottom:tab===t.id?"3px solid #1e40af":"3px solid transparent",fontWeight:tab===t.id?700:500,fontSize:11,cursor:"pointer"}}>
               <div style={{fontSize:18}}>{t.i}</div><div style={{marginTop:2}}>{t.l}</div>
             </button>
@@ -510,8 +536,12 @@ export default function AdminPlanning() {
             <TodayTab
               classStudents={classStudents} allTodayStudents={todayStudents} todayDay={todayDay}
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-              getSession={getSession} onOpen={setSessionModal} goals={goals}
+              getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans}
             />
+          )}
+          {tab==="plan" && (
+            <PlanTab students={students} plans={plans} onPlan={setPlanModal}
+              onDelete={async p=>{ try{ await deletePlan(p.id); setPlans(prev=>{ const n={...prev}; delete n[planKey(p.student_id,p.subject,p.plan_date)]; return n; }); showToast("Plan removed"); } catch(e){ showToast("Failed: "+e.message,"error"); } }} />
           )}
           {tab==="goals" && (
             <GoalsTab students={students} goals={goals} onEdit={setGoalModal} onProject={setProjModal}
@@ -529,6 +559,7 @@ export default function AdminPlanning() {
 
       {sessionModal && openStudent && (
         <SessionModal student={openStudent} session={openSession} keywords={keywords} centerName={centerName} date={selectedDate} todayDay={todayDay} goals={goals}
+          plan={{math:plans[planKey(openStudent.id,"math",selectedDate)],reading:plans[planKey(openStudent.id,"reading",selectedDate)]}}
           onUpdate={patch=>updateLocalSession(sessionModal,patch)}
           onClose={advance=>saveSession(advance)}
           onCancel={()=>setSessionModal(null)}
@@ -572,6 +603,22 @@ export default function AdminPlanning() {
         />
       )}
 
+      {planModal && (
+        <PlanModal
+          student={students.find(s=>s.id===planModal)}
+          plans={plans}
+          onSave={async rows=>{
+            try {
+              await upsertPlans(rows);
+              setPlans(prev=>{ const n={...prev}; for (const r of rows) n[planKey(r.student_id,r.subject,r.plan_date)]=r; return n; });
+              showToast(`📅 ${rows.length} day-plans saved!`);
+              setPlanModal(null);
+            } catch(e){ showToast("Save failed: "+e.message+(e.message?.includes("kumon_plans")?" — run kumon_plans.sql":""),"error"); }
+          }}
+          onClose={()=>setPlanModal(null)}
+        />
+      )}
+
       {projModal && (
         <ProjectionModal
           student={students.find(s=>s.id===projModal.studentId)}
@@ -592,7 +639,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={}}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -620,7 +667,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
       </div>
 
       {viewMode==="table" ? (
-        <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} />
+        <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} />
       ) : <>
         {classStudents.length===0 ? (
           <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
@@ -629,14 +676,14 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
           </div>
         ) : (
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:homeworkOnly.length>0?20:0}}>
-            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay goals={goals}/>)}
+            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}}/>)}
           </div>
         )}
 
         {homeworkOnly.length>0 && <>
           <SectionLabel label={`📝 Homework Day (${todayDay})`} sub={`${homeworkOnly.length} students`} />
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false} goals={goals}/>)}
+            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false} goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}}/>)}
           </div>
         </>}
       </>}
@@ -645,7 +692,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 }
 
 // ─── Day Table View — spreadsheet-style overview of all students ──
-function DayTableView({students,classStudents,todayDay,getSession,onOpen}) {
+function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate}) {
   if (students.length===0) return (
     <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
       <div style={{fontSize:40}}>📭</div>
@@ -672,8 +719,10 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen}) {
             const readToday = s.readingEnabled && s.readingScheduleDays.includes(todayDay);
             const mDone=sess.math?.done||0, rDone=sess.reading?.done||0;
             const money=sess.kumonMoney ?? calcTaskMoney(sess.moneyTasks);
-            const mPlanned = mathToday? s.mathClassWS : s.mathHomeworkWS;
-            const rPlanned = readToday? s.readingClassWS : s.readingHomeworkWS;
+            const mPlan = plans[planKey(s.id,"math",selectedDate)];
+            const rPlan = plans[planKey(s.id,"reading",selectedDate)];
+            const mPlanned = mPlan ? `${mPlan.level}${mPlan.start_ws}–${Math.min(200,mPlan.start_ws+mPlan.ws_count-1)}` : (mathToday? s.mathClassWS : s.mathHomeworkWS);
+            const rPlanned = rPlan ? `${rPlan.level}${rPlan.start_ws}–${Math.min(200,rPlan.start_ws+rPlan.ws_count-1)}` : (readToday? s.readingClassWS : s.readingHomeworkWS);
             return (
               <tr key={s.id} onClick={()=>onOpen(s.id)} style={{ borderBottom:"1px solid #f1f5f9", cursor:"pointer", background:sess.present?(mDone+rDone>0?"#f0fdf4":"#fffbeb"):"white" }}>
                 <td style={{ padding:"8px 10px", fontWeight:700, color:"#1e293b", position:"sticky", left:0, background:"inherit", whiteSpace:"nowrap" }}>
@@ -708,7 +757,7 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen}) {
   );
 }
 
-function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={}}) {
+function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={}}) {
   const mDone=session.math?.done||0, rDone=session.reading?.done||0, total=mDone+rDone;
   const isPresent=session.present, isTouched=session.hasOwnProperty("present");
   const money=session.kumonMoney ?? calcTaskMoney(session.moneyTasks);
@@ -729,6 +778,10 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={}}) {
           {student.mathEnabled&&<LevelBadge subject={mathToday?"Math":"Math (HW)"} level={student.mathLevel} worksheet={student.mathWorksheet} color="#3b82f6"/>}
           {student.readingEnabled&&<LevelBadge subject={readToday?"Read":"Read (HW)"} level={student.readingLevel} worksheet={student.readingWorksheet} color="#ec4899"/>}
         </div>
+        {(plan.math||plan.reading)&&<div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
+          {plan.math&&<Tag c="#3b82f6" bg="#eff6ff">📅 Plan {plan.math.level}{plan.math.start_ws}–{Math.min(200,plan.math.start_ws+plan.math.ws_count-1)}</Tag>}
+          {plan.reading&&<Tag c="#ec4899" bg="#fdf2f8">📅 Plan {plan.reading.level}{plan.reading.start_ws}–{Math.min(200,plan.reading.start_ws+plan.reading.ws_count-1)}</Tag>}
+        </div>}
         <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
           {student.mathEnabled&&<GoalChip goal={goals[student.id+':math']} level={student.mathLevel} worksheet={student.mathWorksheet} subject="math" color="#3b82f6"/>}
           {student.readingEnabled&&<GoalChip goal={goals[student.id+':reading']} level={student.readingLevel} worksheet={student.readingWorksheet} subject="reading" color="#ec4899"/>}
@@ -749,13 +802,13 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={}}) {
 }
 
 // ─── Session Modal ─────────────────────────────────────────────
-function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},onUpdate,onClose,onCancel}) {
+function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},plan={},onUpdate,onClose,onCancel}) {
   const [showMsg,setShowMsg]=useState(false),[copied,setCopied]=useState(false);
   useEffect(()=>{
     if(!s.hasOwnProperty("present")) onUpdate({
       present:true,
-      math:{done:0,fromLevel:student.mathLevel,fromWorksheet:student.mathWorksheet,scores:[],corrections:"none",timeMinutes:""},
-      reading:{done:0,fromLevel:student.readingLevel,fromWorksheet:student.readingWorksheet,scores:[],corrections:"none",timeMinutes:""},
+      math:{done:0,fromLevel:plan.math?.level||student.mathLevel,fromWorksheet:plan.math?.start_ws||student.mathWorksheet,scores:[],circled:[],corrections:"none",timeMinutes:""},
+      reading:{done:0,fromLevel:plan.reading?.level||student.readingLevel,fromWorksheet:plan.reading?.start_ws||student.readingWorksheet,scores:[],circled:[],corrections:"none",timeMinutes:""},
     });
   },[]);
 
@@ -803,9 +856,23 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
           </div>
 
           {present&&<>
-            {student.mathEnabled&&<SubjectSection subject="Math" emoji="📐" color="#3b82f6" level={student.mathLevel} worksheet={student.mathWorksheet} data={m} onUpdate={updMath} dayType={mathToday?"Class day":"Homework day"} plannedWS={mathToday?student.mathClassWS:student.mathHomeworkWS}/>}
-            {student.readingEnabled&&<SubjectSection subject="Reading" emoji="📖" color="#ec4899" level={student.readingLevel} worksheet={student.readingWorksheet} data={r} onUpdate={updRead} dayType={readToday?"Class day":"Homework day"} plannedWS={readToday?student.readingClassWS:student.readingHomeworkWS}/>}
+            {student.mathEnabled&&<SubjectSection subject="Math" emoji="📐" color="#3b82f6" level={plan.math?.level||student.mathLevel} worksheet={plan.math?.start_ws||student.mathWorksheet} data={m} onUpdate={updMath} dayType={mathToday?"Class day":"Homework day"} plannedWS={plan.math?plan.math.ws_count:(mathToday?student.mathClassWS:student.mathHomeworkWS)} planLabel={plan.math?`📅 ${plan.math.level}${plan.math.start_ws}–${Math.min(200,plan.math.start_ws+plan.math.ws_count-1)}`:null}/>}
+            {student.readingEnabled&&<SubjectSection subject="Reading" emoji="📖" color="#ec4899" level={plan.reading?.level||student.readingLevel} worksheet={plan.reading?.start_ws||student.readingWorksheet} data={r} onUpdate={updRead} dayType={readToday?"Class day":"Homework day"} plannedWS={plan.reading?plan.reading.ws_count:(readToday?student.readingClassWS:student.readingHomeworkWS)} planLabel={plan.reading?`📅 ${plan.reading.level}${plan.reading.start_ws}–${Math.min(200,plan.reading.start_ws+plan.reading.ws_count-1)}`:null}/>}
 
+            {(() => {
+              const subs = [];
+              if (student.mathEnabled && (m.done||0)>0) subs.push(m);
+              if (student.readingEnabled && (r.done||0)>0) subs.push(r);
+              if (!subs.length || moneyTasks.sameDayCorrections) return null;
+              const allCircled = subs.every(x => (x.circled||[]).length>=(x.done||0) && (x.circled||[]).slice(0,x.done).every(Boolean));
+              if (!allCircled) return null;
+              return (
+                <div style={{display:"flex",alignItems:"center",gap:10,background:"#eff6ff",border:"1.5px solid #93c5fd",borderRadius:10,padding:"9px 12px",marginBottom:12}}>
+                  <span style={{flex:1,fontSize:12,color:"#1d4ed8",fontWeight:700}}>⭕ All corrections circled — done same day!</span>
+                  <button onClick={()=>onUpdate({moneyTasks:{...moneyTasks,sameDayCorrections:true},kumonMoney:undefined})} style={{border:"none",background:"#2563eb",color:"white",borderRadius:8,padding:"6px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+$5 Same-day</button>
+                </div>
+              );
+            })()}
             {(() => {
               const checks = [];
               if (student.mathEnabled && (m.done||0)>0 && m.timeMinutes) checks.push(sctStatus("math", m.fromLevel||student.mathLevel, m.fromWorksheet||student.mathWorksheet, parseFloat(m.timeMinutes), m.done));
@@ -820,8 +887,8 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
               );
             })()}
             {(() => {
-              const plannedM = student.mathEnabled ? (mathToday?student.mathClassWS:student.mathHomeworkWS) || 0 : 0;
-              const plannedR = student.readingEnabled ? (readToday?student.readingClassWS:student.readingHomeworkWS) || 0 : 0;
+              const plannedM = student.mathEnabled ? (plan.math?plan.math.ws_count:(mathToday?student.mathClassWS:student.mathHomeworkWS)) || 0 : 0;
+              const plannedR = student.readingEnabled ? (plan.reading?plan.reading.ws_count:(readToday?student.readingClassWS:student.readingHomeworkWS)) || 0 : 0;
               const extraCount = Math.max(0,(m.done||0)-plannedM) + Math.max(0,(r.done||0)-plannedR);
               if (extraCount<=0 || moneyTasks.extraWork) return null;
               return (
@@ -921,18 +988,22 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
   );
 }
 
-function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayType,plannedWS}) {
+function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayType,plannedWS,planLabel}) {
   const subjectKey = subject.toLowerCase();
-  const done=data.done||0,fromLevel=data.fromLevel||level,fromWs=data.fromWorksheet||worksheet,scores=data.scores||[],corrections=data.corrections||"none",time=data.timeMinutes||"";
+  const done=data.done||0,fromLevel=data.fromLevel||level,fromWs=data.fromWorksheet||worksheet,scores=data.scores||[],circled=data.circled||[],corrections=data.corrections||"none",time=data.timeMinutes||"";
   const wsItems=getWsItems(fromLevel,fromWs,done,subjectKey);
-  const setDone=nd=>{const cur=data.scores||[];const ns=nd>cur.length?[...cur,...Array(nd-cur.length).fill(100)]:cur.slice(0,nd);onUpdate({done:nd,scores:ns});};
+  const setDone=nd=>{const cur=data.scores||[];const ns=nd>cur.length?[...cur,...Array(nd-cur.length).fill(100)]:cur.slice(0,nd);const nc=(data.circled||[]).slice(0,nd);onUpdate({done:nd,scores:ns,circled:nc});};
   const setScore=(i,v)=>{const sc=[...scores];sc[i]=v;onUpdate({scores:sc});};
+  const toggleCircle=i=>{const c=[...(data.circled||[])];c[i]=!c[i];onUpdate({circled:c});};
+  const fillPlanned=()=>{ if(plannedWS) setDone(plannedWS); };
   return (
     <div style={{background:"#f8fafc",borderRadius:12,padding:"12px 14px",marginBottom:14,border:`1.5px solid ${color}22`}}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
         <span style={{fontSize:16}}>{emoji}</span><span style={{fontWeight:800,fontSize:14,color}}>{subject}</span>
         <span style={{fontSize:11,color:"#94a3b8",background:"white",border:`1px solid ${color}33`,borderRadius:12,padding:"1px 7px"}}>{fromLevel}{fromWs}{done>0&&wsItems.length?` → ${wsItems[wsItems.length-1].level}${wsItems[wsItems.length-1].wsNum}`:""}</span>
         {dayType && <span style={{fontSize:10,color:dayType==="Class day"?"#1e40af":"#16a34a",background:dayType==="Class day"?"#eff6ff":"#f0fdf4",borderRadius:10,padding:"2px 8px",fontWeight:700}}>{dayType}</span>}
+        {planLabel && <span style={{fontSize:10,color:"#7c3aed",background:"#faf5ff",borderRadius:10,padding:"2px 8px",fontWeight:700}}>{planLabel}</span>}
+        {planLabel && done===0 && <button onClick={fillPlanned} style={{marginLeft:"auto",border:"none",background:color,color:"white",borderRadius:8,padding:"4px 10px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Fill planned ✓</button>}
       </div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:done>0?12:0}}>
         <span style={{fontSize:13,color:"#64748b",fontWeight:600}}>Worksheets done {plannedWS!=null && <span style={{color:done>=plannedWS&&plannedWS>0?"#16a34a":"#94a3b8",fontWeight:700}}>(planned: {plannedWS})</span>}</span>
@@ -945,7 +1016,7 @@ function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayTy
       {done>0&&<>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,background:"white",borderRadius:8,padding:"8px 12px",border:"1.5px solid #e2e8f0",flexWrap:"wrap"}}>
           <span style={{fontSize:13,color:"#64748b",fontWeight:600}}>⏱️ Time</span>
-          <input type="number" value={time} onChange={e=>onUpdate({timeMinutes:e.target.value})} placeholder="0.0" min={0} step={0.1} style={{flex:1,border:"none",textAlign:"right",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none",background:"transparent",maxWidth:70,minWidth:50}}/>
+          <input type="number" inputMode="numeric" pattern="[0-9]*" value={time} onChange={e=>onUpdate({timeMinutes:e.target.value.replace(/[^0-9]/g,"")})} placeholder="0" min={0} step={1} style={{flex:1,border:"none",textAlign:"right",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none",background:"transparent",maxWidth:70,minWidth:50}}/>
           <span style={{fontSize:13,color:"#94a3b8",fontWeight:600}}>min total</span>
           <SctBadge subject={subjectKey} level={fromLevel} ws={fromWs} time={time} done={done}/>
         </div>
@@ -955,13 +1026,14 @@ function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayTy
             <div style={{display:"flex",gap:5}}>
               <button onClick={()=>onUpdate({scores:Array(done).fill(100)})} style={{border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:6,padding:"3px 9px",fontSize:11,cursor:"pointer",fontWeight:700}}>All 100</button>
               <button onClick={()=>onUpdate({scores:Array(done).fill(95)})} style={{border:"none",background:"#eff6ff",color:"#3b82f6",borderRadius:6,padding:"3px 9px",fontSize:11,cursor:"pointer",fontWeight:700}}>All 95</button>
+              <button onClick={()=>onUpdate({circled:Array(done).fill(true)})} style={{border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:6,padding:"3px 9px",fontSize:11,cursor:"pointer",fontWeight:700}}>⭕ All</button>
             </div>
           </div>
           <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
             {wsItems.map((item,i)=>(
-              <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}} onClick={()=>setScore(i,cycleScore(scores[i]??100))}>
-                <div style={{background:color,color:"white",fontSize:9,fontWeight:700,padding:"2px 5px",borderRadius:"5px 5px 0 0",whiteSpace:"nowrap"}}>{item.level}{item.wsNum}</div>
-                <div style={{border:`1.5px solid ${(scores[i]??100)<100?"#fde68a":"#e2e8f0"}`,borderTop:"none",borderRadius:"0 0 5px 5px",padding:"3px 6px",background:(scores[i]??100)<100?"#fffbeb":"white",color:(scores[i]??100)<100?"#d97706":"#1e293b",fontWeight:700,fontSize:13,minWidth:36,textAlign:"center"}}>{scores[i]??100}</div>
+              <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",boxShadow:circled[i]?"0 0 0 2.5px #16a34a":"none",borderRadius:6}}>
+                <div onClick={()=>toggleCircle(i)} style={{background:circled[i]?"#16a34a":color,color:"white",fontSize:9,fontWeight:700,padding:"2px 5px",borderRadius:"5px 5px 0 0",whiteSpace:"nowrap",cursor:"pointer",alignSelf:"stretch",textAlign:"center"}} title="Tap when corrections are done (circle)">{circled[i]?"⭕ ":""}{item.level}{item.wsNum}</div>
+                <div onClick={()=>setScore(i,cycleScore(scores[i]??100))} style={{border:`1.5px solid ${(scores[i]??100)<100?"#fde68a":"#e2e8f0"}`,borderTop:"none",borderRadius:"0 0 5px 5px",padding:"3px 6px",background:(scores[i]??100)<100?"#fffbeb":"white",color:(scores[i]??100)<100?"#d97706":"#1e293b",fontWeight:700,fontSize:13,minWidth:36,textAlign:"center",cursor:"pointer",alignSelf:"stretch"}}>{scores[i]??100}</div>
               </div>
             ))}
           </div>
@@ -1068,6 +1140,175 @@ function ProjectionModal({student,subject,onSetGoal,onClose,showToast}) {
             {MILESTONE_BANDS.slice().reverse().map(b=><span key={b.label} style={{background:"#f8fafc",borderRadius:6,padding:"3px 8px"}}>{b.medal} {b.label} = {b.ahead===0?"on grade standard":`${b.ahead} ahead`}</span>)}
           </div>
           <button onClick={save} style={{width:"100%",padding:"13px",border:"none",background:"linear-gradient(135deg,#1e40af,#5b21b6)",color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>💾 Save Projection Settings</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Plan Tab — week/vacation worksheet planning ────────────────
+function PlanTab({students,plans,onPlan,onDelete}) {
+  const active = students.filter(s=>s.status!=="inactive");
+  const todayStr = new Date().toISOString().split("T")[0];
+  const upcoming = Object.values(plans).filter(p=>p.plan_date>=todayStr).sort((a,b)=>a.plan_date<b.plan_date?-1:1);
+  const byDate = {};
+  for (const p of upcoming) { (byDate[p.plan_date] = byDate[p.plan_date] || []).push(p); }
+  const nameOf = id => students.find(s=>s.id===id)?.name || "?";
+  return (
+    <div>
+      <div style={{background:"#fefce8",border:"1.5px solid #fde68a",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#92400e",marginBottom:12,lineHeight:1.6}}>
+        📅 Plan worksheets before students arrive — scores and time stay blank until correction time. For vacations, plan 2–3 weeks at once and use the handover list to load the folder.
+      </div>
+      <SectionLabel label="Plan a student" />
+      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:16}}>
+        {active.map(s=>(
+          <button key={s.id} onClick={()=>onPlan(s.id)} style={{display:"flex",alignItems:"center",gap:6,border:"1.5px solid #e2e8f0",background:"white",borderRadius:20,padding:"5px 12px 5px 5px",cursor:"pointer"}}>
+            <span style={{width:26,height:26,borderRadius:"50%",background:sColor(s.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:10}}>{initials(s.name)}</span>
+            <span style={{fontSize:12,fontWeight:700,color:"#1e293b"}}>{s.name.split(" ")[0]}</span>
+          </button>
+        ))}
+      </div>
+      <SectionLabel label="Upcoming plans" sub={`${upcoming.length} entries`}/>
+      {upcoming.length===0 && <div style={{textAlign:"center",padding:24,color:"#94a3b8",fontSize:13}}>Nothing planned yet — tap a student above to start.</div>}
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {Object.entries(byDate).map(([date,list])=>(
+          <div key={date} style={{background:"white",borderRadius:12,padding:"11px 13px",boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#1e293b",marginBottom:7}}>
+              {new Date(date+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"})}
+              {date===todayStr&&<span style={{marginLeft:6,fontSize:9,color:"#1e40af",background:"#eff6ff",borderRadius:8,padding:"1px 7px"}}>TODAY</span>}
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {list.map(p=>(
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                  <span style={{fontWeight:700,color:"#1e293b",minWidth:90,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{nameOf(p.student_id)}</span>
+                  <span style={{fontWeight:700,color:p.subject==="math"?"#3b82f6":"#ec4899"}}>{p.subject==="math"?"📐":"📖"} {p.level}{p.start_ws}–{Math.min(200,p.start_ws+p.ws_count-1)}</span>
+                  <span style={{color:"#94a3b8",fontSize:10}}>{p.ws_count} WS{p.note?` · ${p.note}`:""}</span>
+                  <button onClick={()=>onDelete(p)} style={{marginLeft:"auto",border:"none",background:"#fef2f2",color:"#dc2626",borderRadius:6,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Plan Modal — generate a run of daily worksheet plans ───────
+function PlanModal({student,plans,onSave,onClose}) {
+  const todayStr = new Date().toISOString().split("T")[0];
+  const [startDate,setStartDate] = useState(todayStr);
+  const [days,setDays] = useState(7);
+  const [note,setNote] = useState("");
+  const [mathOn,setMathOn] = useState(!!student.mathEnabled);
+  const [readOn,setReadOn] = useState(!!student.readingEnabled);
+  const [mathPerDay,setMathPerDay] = useState(student.mathClassWS||5);
+  const [readPerDay,setReadPerDay] = useState(student.readingClassWS||5);
+  const [copied,setCopied] = useState(false);
+
+  // Continue from the last existing plan if there is one after today, else current position
+  const lastPlanned = (subject)=>{
+    const mine = Object.values(plans).filter(p=>p.student_id===student.id&&p.subject===subject).sort((a,b)=>a.plan_date<b.plan_date?-1:1);
+    const last = mine[mine.length-1];
+    if (last && last.plan_date >= todayStr) {
+      const after = advancePos(last.level, last.start_ws, last.ws_count, subject);
+      return { level: after.level, ws: after.worksheet };
+    }
+    return subject==="math" ? { level: student.mathLevel, ws: student.mathWorksheet } : { level: student.readingLevel, ws: student.readingWorksheet };
+  };
+
+  const buildRows = ()=>{
+    const rows = [];
+    const positions = { math: lastPlanned("math"), reading: lastPlanned("reading") };
+    for (let d=0; d<days; d++) {
+      const dt = new Date(startDate+"T12:00:00"); dt.setDate(dt.getDate()+d);
+      const dateStr = dt.toISOString().split("T")[0];
+      for (const [sub,on,perDay] of [["math",mathOn,mathPerDay],["reading",readOn,readPerDay]]) {
+        if (!on || !perDay) continue;
+        const pos = positions[sub];
+        rows.push({
+          id:`p_${student.id}_${sub}_${dateStr}`, student_id:student.id, subject:sub,
+          plan_date:dateStr, level:pos.level, start_ws:pos.ws, ws_count:perDay, note:note||null,
+        });
+        const nxt = advancePos(pos.level, pos.ws, perDay, sub);
+        positions[sub] = { level:nxt.level, ws:nxt.worksheet };
+      }
+    }
+    return rows;
+  };
+  const preview = buildRows();
+  const fmt = ds => new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"});
+  const handover = ()=>{
+    const lines = [`${student.name} — Worksheet plan (${fmt(startDate)} → ${fmt(preview[preview.length-1]?.plan_date||startDate)})`];
+    const byDate = {};
+    for (const r of preview) (byDate[r.plan_date]=byDate[r.plan_date]||[]).push(r);
+    for (const [d,list] of Object.entries(byDate))
+      lines.push(`${fmt(d)}: ` + list.map(r=>`${r.subject==="math"?"Math":"Reading"} ${r.level}${r.start_ws}–${Math.min(200,r.start_ws+r.ws_count-1)}`).join("  ·  "));
+    lines.push(`Total: ${preview.reduce((a,r)=>a+r.ws_count,0)} worksheets`);
+    return lines.join("\n");
+  };
+  const copyHandover = async()=>{ try{ await navigator.clipboard.writeText(handover()); setCopied(true); setTimeout(()=>setCopied(false),2500);}catch{} };
+  const Counter = ({v,set,min,max}) => (
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      <CounterBtn size={26} onClick={()=>set(Math.max(min,v-1))}>−</CounterBtn>
+      <span style={{minWidth:26,textAlign:"center",fontWeight:900,fontSize:16}}>{v}</span>
+      <CounterBtn size={26} onClick={()=>set(Math.min(max,v+1))}>+</CounterBtn>
+    </div>
+  );
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",maxHeight:"92vh",overflowY:"auto",paddingBottom:28}}>
+        <div style={{padding:"12px 16px",position:"sticky",top:0,background:"white",zIndex:10,borderBottom:"1px solid #f1f5f9",borderRadius:"20px 20px 0 0"}}>
+          <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 10px"}}/>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>📅 Plan Worksheets — {student.name}</div>
+            <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:16}}>✕</button>
+          </div>
+        </div>
+        <div style={{padding:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:8,marginBottom:12}}>
+            <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>START DATE</div>
+              <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} style={{width:"100%",border:"none",background:"transparent",fontSize:14,fontWeight:700,outline:"none"}}/>
+            </div>
+            <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>DAYS</div>
+              <Counter v={days} set={setDays} min={1} max={28}/>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            {[7,14,21].map(n=><button key={n} onClick={()=>setDays(n)} style={{flex:1,padding:"7px",border:`1.5px solid ${days===n?"#1e40af":"#e2e8f0"}`,background:days===n?"#eff6ff":"white",color:days===n?"#1e40af":"#64748b",borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer"}}>{n===7?"1 week":n===14?"2 weeks ✈️":"3 weeks ✈️"}</button>)}
+          </div>
+          {[student.mathEnabled&&["Math","#3b82f6",mathOn,setMathOn,mathPerDay,setMathPerDay,lastPlanned("math")],
+            student.readingEnabled&&["Reading","#ec4899",readOn,setReadOn,readPerDay,setReadPerDay,lastPlanned("reading")]]
+            .filter(Boolean).map(([label,color,on,setOn,perDay,setPerDay,from])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:10,background:on?color+"0a":"#f8fafc",border:`1.5px solid ${on?color+"44":"#e2e8f0"}`,borderRadius:10,padding:"9px 12px",marginBottom:8}}>
+              <button onClick={()=>setOn(!on)} style={{border:"none",background:on?color:"#e2e8f0",color:"white",borderRadius:14,padding:"4px 11px",fontWeight:700,fontSize:11,cursor:"pointer"}}>{label}</button>
+              <span style={{fontSize:11,color:"#64748b"}}>from <b style={{color}}>{from.level}{from.ws}</b></span>
+              {on && <span style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>WS/day</span>
+                <Counter v={perDay} set={setPerDay} min={1} max={20}/>
+              </span>}
+            </div>
+          ))}
+          <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Note (optional) — e.g. vacation, achievement test prep" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:12,boxSizing:"border-box",outline:"none",marginBottom:12}}/>
+
+          <SectionLabel label="Preview" sub={`${preview.length} entries · ${preview.reduce((a,r)=>a+r.ws_count,0)} WS total`}/>
+          <div style={{background:"#f8fafc",borderRadius:10,padding:"9px 12px",marginBottom:14,maxHeight:230,overflowY:"auto"}}>
+            {preview.map(r=>(
+              <div key={r.id} style={{display:"flex",gap:8,fontSize:12,padding:"3px 0",alignItems:"center"}}>
+                <span style={{color:"#64748b",minWidth:86}}>{fmt(r.plan_date)}</span>
+                <span style={{fontWeight:700,color:r.subject==="math"?"#3b82f6":"#ec4899"}}>{r.subject==="math"?"📐":"📖"} {r.level}{r.start_ws}–{Math.min(200,r.start_ws+r.ws_count-1)}</span>
+              </div>
+            ))}
+            {preview.length===0&&<div style={{color:"#94a3b8",fontSize:12}}>Enable a subject to preview.</div>}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <button onClick={copyHandover} style={{padding:"13px",border:`2px solid ${copied?"#86efac":"#e2e8f0"}`,background:copied?"#f0fdf4":"white",color:copied?"#16a34a":"#475569",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer"}}>{copied?"✓ Copied!":"📄 Copy Handover List"}</button>
+            <button onClick={()=>preview.length&&onSave(preview)} style={{padding:"13px",border:"none",background:preview.length?"linear-gradient(135deg,#1e40af,#5b21b6)":"#e2e8f0",color:preview.length?"white":"#94a3b8",borderRadius:10,fontWeight:700,fontSize:14,cursor:preview.length?"pointer":"default"}}>💾 Save Plan</button>
+          </div>
+          <div style={{fontSize:10,color:"#94a3b8",marginTop:10,lineHeight:1.6}}>Saving overwrites any existing plan for the same student + subject + date. Sequences continue automatically from the latest saved plan.</div>
         </div>
       </div>
     </div>
