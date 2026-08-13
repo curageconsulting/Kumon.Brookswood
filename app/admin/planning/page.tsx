@@ -1656,26 +1656,73 @@ function GoalModal({student,subject,goal,onSave,onClose}) {
   );
 }
 
+// ─── Student completeness checker ──────────────────────────────────
+function missingFields(s) {
+  const issues = [];
+  if (!s.mathEnabled && !s.readingEnabled)
+    issues.push({ field:"subjects", label:"No subjects enabled", severity:"critical" });
+  if (s.mathEnabled && !s.mathLevel)
+    issues.push({ field:"mathLevel", label:"Math level not set", severity:"critical" });
+  if (s.readingEnabled && !s.readingLevel)
+    issues.push({ field:"readingLevel", label:"Reading level not set", severity:"critical" });
+  if (s.mathEnabled && !(s.mathScheduleDays?.length))
+    issues.push({ field:"mathDays", label:"Math class days not set", severity:"high" });
+  if (s.readingEnabled && !(s.readingScheduleDays?.length))
+    issues.push({ field:"readingDays", label:"Reading class days not set", severity:"high" });
+  if (s.mathEnabled && !s.mathWorksheet)
+    issues.push({ field:"mathWS", label:"Math starting worksheet not set", severity:"high" });
+  if (s.readingEnabled && !s.readingWorksheet)
+    issues.push({ field:"readingWS", label:"Reading starting worksheet not set", severity:"high" });
+  if (s.mathEnabled && !s.mathClassWS)
+    issues.push({ field:"mathClassWS", label:"Math worksheets/class not set", severity:"medium" });
+  if (s.readingEnabled && !s.readingClassWS)
+    issues.push({ field:"readClassWS", label:"Reading worksheets/class not set", severity:"medium" });
+  if (!s.parentName)
+    issues.push({ field:"parentName", label:"Parent name missing", severity:"medium" });
+  if (!s.parentContact)
+    issues.push({ field:"parentContact", label:"Parent phone missing", severity:"medium" });
+  if (!s.parentEmail)
+    issues.push({ field:"parentEmail", label:"Parent email missing", severity:"low" });
+  if (!s.grade)
+    issues.push({ field:"grade", label:"Grade not set", severity:"low" });
+  return issues;
+}
+const SEVERITY_COLOR = { critical:"#dc2626", high:"#ea580c", medium:"#d97706", low:"#64748b" };
+const SEVERITY_BG    = { critical:"#fef2f2", high:"#fff7ed", medium:"#fffbeb", low:"#f8fafc" };
+
 // ─── Students Tab ─────────────────────────────────────────────────
 function StudentsTab({students,onEdit,onToggleStatus,onReload}) {
   const [search,setSearch]=useState("");
   const [showInactive,setShowInactive]=useState(false);
-  const filtered=students.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
+  const [view,setView]=useState("all"); // "all" | "issues"
+  const active = students.filter(s=>s.status!=="inactive");
+  const withIssues = active.filter(s=>missingFields(s).length>0).sort((a,b)=>missingFields(b).length-missingFields(a).length);
+  const filtered = (view==="issues" ? withIssues : students)
+    .filter(s=>s.name.toLowerCase().includes(search.toLowerCase()))
+    .filter(s=>view==="issues" || showInactive || s.status!=="inactive");
+  const criticalCount = withIssues.filter(s=>missingFields(s).some(i=>i.severity==="critical")).length;
   return (
     <div>
       <div style={{display:"flex",gap:8,marginBottom:10}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search students..." style={{flex:1,border:"1.5px solid #e2e8f0",borderRadius:10,padding:"10px 14px",fontSize:14,outline:"none",background:"white"}}/>
         <button onClick={()=>onEdit("new")} style={{padding:"10px 16px",border:"none",background:"#1e40af",color:"white",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13,whiteSpace:"nowrap"}}>+ Add</button>
       </div>
-      <button onClick={()=>{ const next=!showInactive; setShowInactive(next); onReload(next); }} style={{ border:"none", background:showInactive?"#fef2f2":"#f8fafc", color:showInactive?"#dc2626":"#64748b", borderRadius:8, padding:"7px 12px", fontWeight:700, fontSize:11, cursor:"pointer", marginBottom:12 }}>
+      <div style={{display:"flex",gap:6,marginBottom:10}}>
+        <button onClick={()=>setView("all")} style={{flex:1,padding:"8px",border:"none",borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer",background:view==="all"?"#1e40af":"#f1f5f9",color:view==="all"?"white":"#64748b"}}>All Students</button>
+        <button onClick={()=>setView("issues")} style={{flex:1,padding:"8px",border:"none",borderRadius:8,fontWeight:700,fontSize:11,cursor:"pointer",background:view==="issues"?"#dc2626":"#f1f5f9",color:view==="issues"?"white":"#64748b",position:"relative"}}>
+          ⚠️ Needs Attention {withIssues.length>0&&<span style={{background:criticalCount?"#dc2626":"#ea580c",color:"white",borderRadius:10,padding:"1px 7px",fontSize:10,marginLeft:4}}>{withIssues.length}</span>}
+        </button>
+      </div>
+      {view==="issues" && withIssues.length===0 && <div style={{textAlign:"center",padding:32,color:"#16a34a",fontWeight:700,fontSize:14}}>✅ All students are fully set up!</div>}
+      {view==="all" && <button onClick={()=>{ const next=!showInactive; setShowInactive(next); onReload(next); }} style={{ border:"none", background:showInactive?"#fef2f2":"#f8fafc", color:showInactive?"#dc2626":"#64748b", borderRadius:8, padding:"7px 12px", fontWeight:700, fontSize:11, cursor:"pointer", marginBottom:12 }}>
         {showInactive?"👁️ Showing inactive — tap to hide":"👁️‍🗨️ Show inactive students"}
-      </button>
+      </button>}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {filtered.map(s=>(
-          <div key={s.id} onClick={()=>onEdit(s.id)} style={{background:"white",borderRadius:12,padding:"13px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,boxShadow:"0 1px 3px rgba(0,0,0,0.07)",opacity:s.status==="inactive"?0.55:1}}>
+          <div key={s.id} onClick={()=>onEdit(s.id)} style={{background:"white",borderRadius:12,padding:"13px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:12,boxShadow:"0 1px 3px rgba(0,0,0,0.07)",opacity:s.status==="inactive"?0.55:1,border:missingFields(s).some(i=>i.severity==="critical")?"1.5px solid #fca5a5":missingFields(s).length?"1.5px solid #fed7aa":"1.5px solid transparent"}}>
             <div style={{width:42,height:42,borderRadius:"50%",background:sColor(s.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:14,flexShrink:0}}>{initials(s.name)}</div>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontWeight:700,color:"#1e293b",fontSize:14,display:"flex",alignItems:"center",gap:6}}>
+              <div style={{fontWeight:700,color:"#1e293b",fontSize:14,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                 {s.name}
                 {s.status==="inactive" && <span style={{fontSize:9,color:"#dc2626",background:"#fef2f2",borderRadius:8,padding:"1px 7px",fontWeight:700}}>INACTIVE</span>}
                 {s.status!=="inactive" && !s.mathEnabled && !s.readingEnabled && <span style={{fontSize:9,color:"#ea580c",background:"#fff7ed",borderRadius:8,padding:"1px 7px",fontWeight:700}}>🆕 NEEDS SETUP</span>}
@@ -1686,9 +1733,14 @@ function StudentsTab({students,onEdit,onToggleStatus,onReload}) {
                 {s.readingEnabled&&<LevelBadge subject="Read" level={s.readingLevel} worksheet={s.readingWorksheet} color="#ec4899"/>}
               </div>
               <div style={{fontSize:10,color:"#94a3b8",marginTop:4}}>
-                {s.mathEnabled&&`Math: ${s.mathScheduleDays.join(",")||"—"}`}{s.mathEnabled&&s.readingEnabled&&" · "}
-                {s.readingEnabled&&`Read: ${s.readingScheduleDays.join(",")||"—"}`}
+                {s.mathEnabled&&`Math: ${s.mathScheduleDays?.join(",")||"— no days set"}`}{s.mathEnabled&&s.readingEnabled&&" · "}
+                {s.readingEnabled&&`Read: ${s.readingScheduleDays?.join(",")||"— no days set"}`}
               </div>
+              {missingFields(s).length>0 && <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:5}}>
+                {missingFields(s).map(i=>(
+                  <span key={i.field} style={{fontSize:9,fontWeight:700,color:SEVERITY_COLOR[i.severity],background:SEVERITY_BG[i.severity],borderRadius:6,padding:"2px 6px"}}>{i.label}</span>
+                ))}
+              </div>}
             </div>
             <button onClick={e=>{e.stopPropagation(); onToggleStatus&&onToggleStatus(s);}}
               style={{border:"none",background:s.status==="inactive"?"#f0fdf4":"#fef2f2",color:s.status==="inactive"?"#16a34a":"#dc2626",borderRadius:8,padding:"6px 10px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
