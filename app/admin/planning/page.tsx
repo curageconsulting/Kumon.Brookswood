@@ -1223,6 +1223,8 @@ function PlanModal({student,plans,onSave,onClose}) {
   const [mathPerDay,setMathPerDay] = useState(student.mathClassWS||5);
   const [readPerDay,setReadPerDay] = useState(student.readingClassWS||5);
   const [copied,setCopied] = useState(false);
+  const [overrides,setOverrides] = useState({}); // { "date|subject": {level,start_ws,ws_count} }
+  const [editRow,setEditRow] = useState(null);   // "date|subject" | null
 
   // Continue from the last existing plan if there is one after today, else current position
   const lastPlanned = (subject)=>{
@@ -1243,12 +1245,16 @@ function PlanModal({student,plans,onSave,onClose}) {
       const dateStr = dt.toISOString().split("T")[0];
       for (const [sub,on,perDay] of [["math",mathOn,mathPerDay],["reading",readOn,readPerDay]]) {
         if (!on || !perDay) continue;
-        const pos = positions[sub];
+        const key = `${dateStr}|${sub}`;
+        const ov = overrides[key];
+        const pos = ov ? { level: ov.level, ws: ov.start_ws } : positions[sub];
+        const count = ov?.ws_count ?? perDay;
         rows.push({
           id:`p_${student.id}_${sub}_${dateStr}`, student_id:student.id, subject:sub,
-          plan_date:dateStr, level:pos.level, start_ws:pos.ws, ws_count:perDay, note:note||null,
+          plan_date:dateStr, level:pos.level, start_ws:pos.ws, ws_count:count, note:note||null,
+          _key:key, _edited:!!ov,
         });
-        const nxt = advancePos(pos.level, pos.ws, perDay, sub);
+        const nxt = advancePos(pos.level, pos.ws, count, sub);
         positions[sub] = { level:nxt.level, ws:nxt.worksheet };
       }
     }
@@ -1311,21 +1317,41 @@ function PlanModal({student,plans,onSave,onClose}) {
           ))}
           <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Note (optional) — e.g. vacation, achievement test prep" style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:12,boxSizing:"border-box",outline:"none",marginBottom:12}}/>
 
-          <SectionLabel label="Preview" sub={`${preview.length} entries · ${preview.reduce((a,r)=>a+r.ws_count,0)} WS total`}/>
+          <SectionLabel label="Preview — tap any day to edit" sub={`${preview.length} entries · ${preview.reduce((a,r)=>a+r.ws_count,0)} WS total`}/>
           <div style={{background:"#f8fafc",borderRadius:10,padding:"9px 12px",marginBottom:14,maxHeight:230,overflowY:"auto"}}>
-            {preview.map(r=>(
-              <div key={r.id} style={{display:"flex",gap:8,fontSize:12,padding:"3px 0",alignItems:"center"}}>
-                <span style={{color:"#64748b",minWidth:86}}>{fmt(r.plan_date)}</span>
-                <span style={{fontWeight:700,color:r.subject==="math"?"#3b82f6":"#ec4899"}}>{r.subject==="math"?"📐":"📖"} {r.level}{r.start_ws}–{Math.min(200,r.start_ws+r.ws_count-1)}</span>
+            {preview.map(r=>{
+              const isEditing = editRow===r._key;
+              const color = r.subject==="math"?"#3b82f6":"#ec4899";
+              const seq = levelsFor(r.subject);
+              const setOv = patch => setOverrides(p=>({...p,[r._key]:{level:r.level,start_ws:r.start_ws,ws_count:r.ws_count,...(p[r._key]||{}),...patch}}));
+              return (
+              <div key={r.id} style={{borderBottom:"1px solid #eef2f7"}}>
+                <div onClick={()=>setEditRow(isEditing?null:r._key)} style={{display:"flex",gap:8,fontSize:12,padding:"5px 0",alignItems:"center",cursor:"pointer"}}>
+                  <span style={{color:"#64748b",minWidth:86}}>{fmt(r.plan_date)}</span>
+                  <span style={{fontWeight:700,color}}>{r.subject==="math"?"📐":"📖"} {r.level}{r.start_ws}–{Math.min(200,r.start_ws+r.ws_count-1)}</span>
+                  <span style={{fontSize:10,color:"#94a3b8"}}>{r.ws_count} WS</span>
+                  {r._edited&&<span style={{fontSize:9,color:"#ea580c",background:"#fff7ed",borderRadius:6,padding:"1px 6px",fontWeight:700}}>edited</span>}
+                  <span style={{marginLeft:"auto",color:"#cbd5e1",fontSize:12}}>{isEditing?"▲":"✎"}</span>
+                </div>
+                {isEditing&&(
+                  <div style={{display:"flex",gap:6,alignItems:"center",padding:"4px 0 8px 86px",flexWrap:"wrap"}}>
+                    <select value={r.level} onChange={e=>setOv({level:e.target.value,start_ws:1})} style={{border:"1.5px solid #e2e8f0",borderRadius:7,padding:"5px 6px",fontSize:12,background:"white"}}>{seq.map(l=><option key={l}>{l}</option>)}</select>
+                    <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>WS</span>
+                    <input type="number" inputMode="numeric" min={1} max={200} value={r.start_ws} onChange={e=>setOv({start_ws:Math.max(1,Math.min(200,parseInt(e.target.value)||1))})} style={{width:56,border:"1.5px solid #e2e8f0",borderRadius:7,padding:"5px 6px",fontSize:12,outline:"none"}}/>
+                    <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>Count</span>
+                    <input type="number" inputMode="numeric" min={1} max={30} value={r.ws_count} onChange={e=>setOv({ws_count:Math.max(1,Math.min(30,parseInt(e.target.value)||1))})} style={{width:48,border:"1.5px solid #e2e8f0",borderRadius:7,padding:"5px 6px",fontSize:12,outline:"none"}}/>
+                    {r._edited&&<button onClick={e=>{e.stopPropagation();setOverrides(p=>{const n={...p};delete n[r._key];return n;});}} style={{border:"none",background:"#f1f5f9",color:"#64748b",borderRadius:7,padding:"5px 10px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Reset</button>}
+                  </div>
+                )}
               </div>
-            ))}
+            );})}
             {preview.length===0&&<div style={{color:"#94a3b8",fontSize:12}}>Enable a subject to preview.</div>}
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             <button onClick={copyHandover} style={{padding:"13px",border:`2px solid ${copied?"#86efac":"#e2e8f0"}`,background:copied?"#f0fdf4":"white",color:copied?"#16a34a":"#475569",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer"}}>{copied?"✓ Copied!":"📄 Copy Handover List"}</button>
-            <button onClick={()=>preview.length&&onSave(preview)} style={{padding:"13px",border:"none",background:preview.length?"linear-gradient(135deg,#1e40af,#5b21b6)":"#e2e8f0",color:preview.length?"white":"#94a3b8",borderRadius:10,fontWeight:700,fontSize:14,cursor:preview.length?"pointer":"default"}}>💾 Save Plan</button>
+            <button onClick={()=>preview.length&&onSave(preview.map(({_key,_edited,...row})=>row))} style={{padding:"13px",border:"none",background:preview.length?"linear-gradient(135deg,#1e40af,#5b21b6)":"#e2e8f0",color:preview.length?"white":"#94a3b8",borderRadius:10,fontWeight:700,fontSize:14,cursor:preview.length?"pointer":"default"}}>💾 Save Plan</button>
           </div>
-          <div style={{fontSize:10,color:"#94a3b8",marginTop:10,lineHeight:1.6}}>Saving overwrites any existing plan for the same student + subject + date. Sequences continue automatically from the latest saved plan.</div>
+          <div style={{fontSize:10,color:"#94a3b8",marginTop:10,lineHeight:1.6}}>Saving overwrites any existing plan for the same student + subject + date. Sequences continue automatically from the latest saved plan — and editing a day reflows every day after it (repeat a level, jump ahead, or lighten a day, and the rest adjusts).</div>
         </div>
       </div>
     </div>
