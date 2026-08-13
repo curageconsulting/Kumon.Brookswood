@@ -464,6 +464,8 @@ export default function AdminPlanning() {
   const [projModal,setProjModal] = useState(null); // {studentId, subject} | null
   const [plans,setPlans] = useState({});
   const [kiosk,setKiosk] = useState({});
+  const [notifOn,setNotifOn] = useState(typeof Notification!=="undefined" && Notification.permission==="granted");
+  const [notified,setNotified] = useState({});
   const [planModal,setPlanModal] = useState(null); // studentId | null
   const [sessionModal,setSessionModal] = useState(null);
   const [editModal,setEditModal] = useState(null);
@@ -501,6 +503,72 @@ export default function AdminPlanning() {
       catch(e){ console.warn("Kiosk status unavailable:", e.message); }
     })();
   },[selectedDate]);
+
+  // ─── Class-time watch: poll kiosk every 60s, alert on overstay ──
+  // Limit: 45 min for 1-subject students, 90 min for 2-subject students.
+  const overstayList = (() => {
+    const todayReal = new Date().toISOString().split("T")[0];
+    if (selectedDate !== todayReal) return [];
+    const out = [];
+    for (const s of students) {
+      if (s.status==="inactive" || !s.kumonStudentId) continue;
+      const ks = kiosk[String(s.kumonStudentId)];
+      if (!ks || ks.checkedOut) continue;
+      const limit = (s.mathEnabled && s.readingEnabled) ? 90 : 45;
+      if (ks.minutes > limit) out.push({ student: s, minutes: ks.minutes, limit, over: ks.minutes - limit });
+    }
+    return out.sort((a,b)=>b.over-a.over);
+  })();
+
+  useEffect(()=>{
+    const tick = async ()=>{
+      const todayReal = new Date().toISOString().split("T")[0];
+      if (selectedDate !== todayReal) return;
+      try { setKiosk(await fetchKioskStatus(selectedDate)); } catch(e){}
+    };
+    const iv = setInterval(tick, 60000);
+    return ()=>clearInterval(iv);
+  },[selectedDate]);
+
+  useEffect(()=>{
+    if (!overstayList.length) return;
+    for (const o of overstayList) {
+      const key = o.student.id + ":" + (kiosk[String(o.student.kumonStudentId)]?.checkedIn || "");
+      if (notified[key]) continue;
+      setNotified(p=>({...p,[key]:true}));
+      if (notifOn && typeof Notification!=="undefined" && Notification.permission==="granted") {
+        try { new Notification("⏰ Class time exceeded", {
+          body: `${o.student.name} — ${o.minutes} min in center (limit ${o.limit} min). Time to wrap up!`,
+          tag: key, requireInteraction: true,
+        }); } catch(e){}
+      }
+    }
+  },[kiosk]);
+
+  const enableNotifications = async ()=>{
+    if (typeof Notification==="undefined") { showToast("Notifications not supported on this browser","error"); return; }
+    const perm = await Notification.requestPermission();
+    if (perm!=="granted") { showToast("Notifications blocked — allow them in browser settings","error"); return; }
+    setNotifOn(true);
+    // Web Push: subscribe this device so alerts arrive even with the app closed
+    try {
+      const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (vapid && "serviceWorker" in navigator && "PushManager" in window) {
+        const reg = await navigator.serviceWorker.register("/sw.js");
+        const b64 = vapid.replace(/-/g,"+").replace(/_/g,"/");
+        const pad = "=".repeat((4 - b64.length % 4) % 4);
+        const raw = atob(b64 + pad);
+        const key = new Uint8Array([...raw].map(c=>c.charCodeAt(0)));
+        const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        const j = sub.toJSON();
+        await fetch("/api/push/subscribe", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ endpoint: j.endpoint, keys: j.keys, deviceLabel: navigator.userAgent.slice(0,80) }) });
+        showToast("🔔 Push alerts on — works even when the app is closed");
+        return;
+      }
+    } catch(e){ console.warn("Push subscribe failed, in-page alerts only:", e); }
+    showToast("🔔 Overstay alerts on while this page is open");
+  };
 
   const todayDay = todayDayStr(selectedDate);
   const todayStudents = students.filter(s =>
@@ -597,6 +665,7 @@ export default function AdminPlanning() {
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
               getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans} kiosk={kiosk}
               allStudents={students} onSetup={setEditModal}
+              overstayList={overstayList} notifOn={notifOn} onEnableNotifications={enableNotifications}
             />
           )}
           {tab==="plan" && (
@@ -711,7 +780,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -726,6 +795,25 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
         <button onClick={()=>setSelectedDate(new Date().toISOString().split("T")[0])} style={{border:"none",background:"#eff6ff",color:"#1e40af",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Today</button>
       </div>
 
+      {overstayList.length>0 && (
+        <div style={{background:"#fef2f2",border:"2px solid #fca5a5",borderRadius:12,padding:"11px 13px",marginBottom:12}}>
+          <div style={{fontSize:13,fontWeight:800,color:"#dc2626",marginBottom:7}}>⏰ Class time exceeded — {overstayList.length} student{overstayList.length>1?"s":""} should head home</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {overstayList.map(o=>(
+              <div key={o.student.id} onClick={()=>onOpen(o.student.id)} style={{display:"flex",alignItems:"center",gap:9,background:"white",borderRadius:9,padding:"7px 11px",cursor:"pointer"}}>
+                <span style={{width:28,height:28,borderRadius:"50%",background:sColor(o.student.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:10}}>{initials(o.student.name)}</span>
+                <span style={{flex:1,fontWeight:700,fontSize:13,color:"#1e293b"}}>{o.student.name}</span>
+                <span style={{fontSize:11,fontWeight:800,color:"#dc2626"}}>{o.minutes} min <span style={{color:"#94a3b8",fontWeight:600}}>/ {o.limit}</span> · +{o.over} over</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!notifOn && typeof Notification!=="undefined" && (
+        <button onClick={onEnableNotifications} style={{width:"100%",marginBottom:12,padding:"9px",border:"1.5px dashed #cbd5e1",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+          🔔 Enable overstay alerts on this device (45 min · 1 subject / 90 min · 2 subjects)
+        </button>
+      )}
       {(() => {
         const needsSetup = allStudents.filter(s => s.status !== "inactive" && !s.mathEnabled && !s.readingEnabled);
         if (!needsSetup.length) return null;
@@ -873,7 +961,9 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={
         <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{student.grade}
           {kioskStatus&&(kioskStatus.checkedOut
             ? <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#64748b",background:"#f1f5f9",borderRadius:8,padding:"1px 7px"}}>🔵 Left · {kioskStatus.minutes}min</span>
-            : <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#15803d",background:"#f0fdf4",borderRadius:8,padding:"1px 7px"}}>🟢 In center · {kioskStatus.minutes}min</span>)}
+            : kioskStatus.minutes > ((student.mathEnabled&&student.readingEnabled)?90:45)
+              ? <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#dc2626",background:"#fef2f2",borderRadius:8,padding:"1px 7px"}}>⏰ {kioskStatus.minutes}min — over time!</span>
+              : <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#15803d",background:"#f0fdf4",borderRadius:8,padding:"1px 7px"}}>🟢 In center · {kioskStatus.minutes}min</span>)}
         </div>
         <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
           {student.mathEnabled&&<LevelBadge subject={mathToday?"Math":"Math (HW)"} level={student.mathLevel} worksheet={student.mathWorksheet} color="#3b82f6"/>}
