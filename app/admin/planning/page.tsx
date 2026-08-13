@@ -631,9 +631,12 @@ export default function AdminPlanning() {
 
       <div style={{background:"linear-gradient(135deg,#0f2d6b,#1e40af,#2563eb)",padding:"14px 16px",color:"white"}}>
         <div style={{maxWidth:700,margin:"0 auto",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div>
-            <div style={{fontWeight:900,fontSize:18,letterSpacing:-0.4}}>📚 {centerName}</div>
-            <div style={{fontSize:11,opacity:0.65,marginTop:2,letterSpacing:0.3}}>INSTRUCTOR PORTAL</div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <a href="/admin/dashboard" style={{border:"none",background:"rgba(255,255,255,0.15)",borderRadius:8,padding:"6px 11px",color:"white",fontSize:13,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>← Dashboard</a>
+            <div>
+              <div style={{fontWeight:900,fontSize:18,letterSpacing:-0.4}}>📚 {centerName}</div>
+              <div style={{fontSize:11,opacity:0.65,marginTop:2,letterSpacing:0.3}}>INSTRUCTOR PORTAL</div>
+            </div>
           </div>
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:13,fontWeight:700}}>{new Date(selectedDate+"T12:00:00").toLocaleDateString("en-CA",{weekday:"short",month:"short",day:"numeric"})}</div>
