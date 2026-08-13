@@ -85,6 +85,11 @@ async function upsertStudent(student: any) {
   if (error) throw error
 }
 
+async function setStudentStatus(id: string, status: string) {
+  const { error } = await supabase.from('kumon_students').update({ status }).eq('id', id)
+  if (error) throw error
+}
+
 async function deleteStudent(id: string) {
   const { error } = await supabase.from('kumon_students').delete().eq('id', id)
   if (error) throw error
@@ -176,6 +181,26 @@ async function upsertPlans(rows: any[]) {
 async function deletePlan(id: string) {
   const { error } = await supabase.from('kumon_plans').delete().eq('id', id)
   if (error) throw error
+}
+
+// ─── Kiosk check-in/out status (booking portal sessions bridge) ─
+// Reads the booking portal's sessions for the date and maps them to
+// kumon_students via students.kumon_student_id.
+async function fetchKioskStatus(dateStr: string) {
+  const { data, error } = await supabase.from('sessions')
+    .select('checked_in_at, checked_out_at, status, student:students(kumon_student_id)')
+    .eq('session_date', dateStr)
+  if (error) throw error
+  const out: any = {}
+  for (const s of (data || [])) {
+    const kid = s.student?.kumon_student_id
+    if (!kid || !s.checked_in_at) continue
+    const inAt = new Date(s.checked_in_at)
+    const outAt = s.checked_out_at ? new Date(s.checked_out_at) : null
+    const mins = Math.round(((outAt ? outAt.getTime() : Date.now()) - inAt.getTime()) / 60000)
+    out[String(kid)] = { checkedIn: s.checked_in_at, checkedOut: s.checked_out_at, minutes: mins }
+  }
+  return out
 }
 
 
@@ -420,6 +445,7 @@ export default function AdminPlanning() {
   const [goalModal,setGoalModal] = useState(null); // {studentId, subject} | null
   const [projModal,setProjModal] = useState(null); // {studentId, subject} | null
   const [plans,setPlans] = useState({});
+  const [kiosk,setKiosk] = useState({});
   const [planModal,setPlanModal] = useState(null); // studentId | null
   const [sessionModal,setSessionModal] = useState(null);
   const [editModal,setEditModal] = useState(null);
@@ -453,13 +479,16 @@ export default function AdminPlanning() {
     (async()=>{
       try { setSessionsToday(await fetchSessionsForDate(selectedDate)); }
       catch(e){ console.error(e); }
+      try { setKiosk(await fetchKioskStatus(selectedDate)); }
+      catch(e){ console.warn("Kiosk status unavailable:", e.message); }
     })();
   },[selectedDate]);
 
   const todayDay = todayDayStr(selectedDate);
   const todayStudents = students.filter(s =>
+    s.status !== "inactive" && (
     (s.mathEnabled && (s.mathScheduleDays.includes(todayDay) || s.mathHomeworkDays.includes(todayDay))) ||
-    (s.readingEnabled && (s.readingScheduleDays.includes(todayDay) || s.readingHomeworkDays.includes(todayDay)))
+    (s.readingEnabled && (s.readingScheduleDays.includes(todayDay) || s.readingHomeworkDays.includes(todayDay))))
   );
   const classStudents = todayStudents.filter(s =>
     (s.mathEnabled && s.mathScheduleDays.includes(todayDay)) || (s.readingEnabled && s.readingScheduleDays.includes(todayDay))
@@ -548,7 +577,8 @@ export default function AdminPlanning() {
             <TodayTab
               classStudents={classStudents} allTodayStudents={todayStudents} todayDay={todayDay}
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
-              getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans}
+              getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans} kiosk={kiosk}
+              allStudents={students} onSetup={setEditModal}
             />
           )}
           {tab==="plan" && (
@@ -560,7 +590,16 @@ export default function AdminPlanning() {
               onRemove={async g=>{ try{ await removeGoal(g.id); const n={...goals}; delete n[g.student_id+':'+g.subject]; setGoals(n); showToast("Goal completed 🎉"); } catch(e){ showToast("Failed: "+e.message,"error"); } }} />
           )}
           {tab==="students" && (
-            <StudentsTab students={students} onEdit={setEditModal} onReload={async(inc)=>{ try{ setStudents(await fetchStudents(inc)); } catch(e){ showToast("Reload failed: "+e.message,"error"); } }} />
+            <StudentsTab students={students} onEdit={setEditModal}
+              onToggleStatus={async s=>{
+                const next = s.status==="inactive" ? "active" : "inactive";
+                try {
+                  await setStudentStatus(s.id, next);
+                  setStudents(prev=>prev.map(x=>x.id===s.id?{...x,status:next}:x));
+                  showToast(next==="active" ? `✅ ${s.name} is active` : `⏸️ ${s.name} marked inactive`);
+                } catch(e){ showToast("Update failed: "+e.message,"error"); }
+              }}
+              onReload={async(inc)=>{ try{ setStudents(await fetchStudents(inc)); } catch(e){ showToast("Reload failed: "+e.message,"error"); } }} />
           )}
           {tab==="settings" && (
             <SettingsTab centerName={centerName} setCenterName={async v=>{setCenterName(v); await saveSetting('center_name',v); showToast("✅ Saved!");}}
@@ -572,6 +611,7 @@ export default function AdminPlanning() {
       {sessionModal && openStudent && (
         <SessionModal student={openStudent} session={openSession} keywords={keywords} centerName={centerName} date={selectedDate} todayDay={todayDay} goals={goals}
           plan={{math:plans[planKey(openStudent.id,"math",selectedDate)],reading:plans[planKey(openStudent.id,"reading",selectedDate)]}}
+          kioskStatus={kiosk[String(openStudent.kumonStudentId)]}
           onShiftDate={shiftSessionDate}
           onUpdate={patch=>updateLocalSession(sessionModal,patch)}
           onClose={advance=>saveSession(advance)}
@@ -652,7 +692,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={}}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -667,6 +707,28 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
         <button onClick={()=>setSelectedDate(new Date().toISOString().split("T")[0])} style={{border:"none",background:"#eff6ff",color:"#1e40af",borderRadius:8,padding:"7px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Today</button>
       </div>
 
+      {(() => {
+        const needsSetup = allStudents.filter(s => s.status !== "inactive" && !s.mathEnabled && !s.readingEnabled);
+        if (!needsSetup.length) return null;
+        return (
+          <div style={{background:"#fff7ed",border:"1.5px solid #fdba74",borderRadius:12,padding:"11px 13px",marginBottom:12}}>
+            <div style={{fontSize:12,fontWeight:800,color:"#c2410c",marginBottom:8}}>🆕 New students — needs setup ({needsSetup.length})</div>
+            <div style={{fontSize:10,color:"#9a3412",marginBottom:8}}>Imported from the Kumon roster but subjects, levels, and class days aren't set yet. Tap to configure after speaking with the parent.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:5}}>
+              {needsSetup.map(s=>(
+                <div key={s.id} onClick={()=>onSetup&&onSetup(s.id)} style={{display:"flex",alignItems:"center",gap:9,background:"white",borderRadius:9,padding:"8px 11px",cursor:"pointer"}}>
+                  <span style={{width:30,height:30,borderRadius:"50%",background:sColor(s.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:11}}>{initials(s.name)}</span>
+                  <span style={{flex:1,minWidth:0}}>
+                    <span style={{fontWeight:700,fontSize:13,color:"#1e293b",display:"block"}}>{s.name}</span>
+                    <span style={{fontSize:10,color:"#64748b"}}>{s.grade||"grade —"}{s.parentName?` · ${s.parentName}`:""}{s.parentContact?` · ${s.parentContact}`:""}</span>
+                  </span>
+                  <span style={{fontSize:11,fontWeight:700,color:"#ea580c",whiteSpace:"nowrap"}}>Set up ›</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
       {classStudents.length>0 && (
         <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,marginBottom:10}}>
           <div style={{background:"#eff6ff",borderRadius:10,padding:"10px 8px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:900,color:"#3b82f6"}}>{classStudents.length}</div><div style={{fontSize:10,color:"#64748b",marginTop:2}}>Class Today</div></div>
@@ -680,7 +742,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
       </div>
 
       {viewMode==="table" ? (
-        <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} />
+        <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
       ) : <>
         {classStudents.length===0 ? (
           <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
@@ -689,14 +751,14 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
           </div>
         ) : (
           <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:homeworkOnly.length>0?20:0}}>
-            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}}/>)}
+            {classStudents.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}} kioskStatus={kiosk[String(s.kumonStudentId)]}/>)}
           </div>
         )}
 
         {homeworkOnly.length>0 && <>
           <SectionLabel label={`📝 Homework Day (${todayDay})`} sub={`${homeworkOnly.length} students`} />
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false} goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}}/>)}
+            {homeworkOnly.map(s=><StudentCard key={s.id} student={s} session={getSession(s.id)} todayDay={todayDay} onOpen={()=>onOpen(s.id)} isClassDay={false} goals={goals} plan={{math:plans[planKey(s.id,"math",selectedDate)],reading:plans[planKey(s.id,"reading",selectedDate)]}} kioskStatus={kiosk[String(s.kumonStudentId)]}/>)}
           </div>
         </>}
       </>}
@@ -705,7 +767,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 }
 
 // ─── Day Table View — spreadsheet-style overview of all students ──
-function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate}) {
+function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate,kiosk={}}) {
   if (students.length===0) return (
     <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
       <div style={{fontSize:40}}>📭</div>
@@ -750,7 +812,10 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={
                 </td>
                 <td style={{ padding:"8px 10px", textAlign:"center" }}>
                   {(() => {
-                    if (!sess.hasOwnProperty("present")) return <span style={{color:"#cbd5e1"}}>—</span>;
+                    const ks = kiosk[String(s.kumonStudentId)];
+                    if (!sess.hasOwnProperty("present")) return ks
+                      ? (ks.checkedOut ? <span style={{color:"#64748b",fontWeight:700,fontSize:10}}>🔵 Left</span> : <span style={{color:"#15803d",fontWeight:700,fontSize:10}}>🟢 In</span>)
+                      : <span style={{color:"#cbd5e1"}}>—</span>;
                     if (!sess.present) return <span style={{color:"#dc2626",fontWeight:700}}>Absent</span>;
                     const sctChecks = [];
                     if (mDone>0 && sess.math?.timeMinutes) sctChecks.push(sctStatus("math", sess.math.fromLevel||s.mathLevel, sess.math.fromWorksheet||s.mathWorksheet, parseFloat(sess.math.timeMinutes), mDone));
@@ -770,7 +835,7 @@ function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={
   );
 }
 
-function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={}}) {
+function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={},kioskStatus}) {
   const mDone=session.math?.done||0, rDone=session.reading?.done||0, total=mDone+rDone;
   const isPresent=session.present, isTouched=session.hasOwnProperty("present");
   const money=session.kumonMoney ?? calcTaskMoney(session.moneyTasks);
@@ -786,7 +851,11 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={
       <div style={{width:42,height:42,borderRadius:"50%",background:sColor(student.id),color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:14,flexShrink:0}}>{initials(student.name)}</div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontWeight:700,fontSize:14,color:"#1e293b"}}>{student.name}</div>
-        <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{student.grade}</div>
+        <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{student.grade}
+          {kioskStatus&&(kioskStatus.checkedOut
+            ? <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#64748b",background:"#f1f5f9",borderRadius:8,padding:"1px 7px"}}>🔵 Left · {kioskStatus.minutes}min</span>
+            : <span style={{marginLeft:6,fontSize:9,fontWeight:800,color:"#15803d",background:"#f0fdf4",borderRadius:8,padding:"1px 7px"}}>🟢 In center · {kioskStatus.minutes}min</span>)}
+        </div>
         <div style={{display:"flex",gap:5,marginTop:4,flexWrap:"wrap"}}>
           {student.mathEnabled&&<LevelBadge subject={mathToday?"Math":"Math (HW)"} level={student.mathLevel} worksheet={student.mathWorksheet} color="#3b82f6"/>}
           {student.readingEnabled&&<LevelBadge subject={readToday?"Read":"Read (HW)"} level={student.readingLevel} worksheet={student.readingWorksheet} color="#ec4899"/>}
@@ -815,7 +884,7 @@ function StudentCard({student,session,todayDay,onOpen,isClassDay,goals={},plan={
 }
 
 // ─── Session Modal ─────────────────────────────────────────────
-function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},plan={},onShiftDate,onUpdate,onClose,onCancel}) {
+function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals={},plan={},kioskStatus,onShiftDate,onUpdate,onClose,onCancel}) {
   const [showMsg,setShowMsg]=useState(false),[copied,setCopied]=useState(false);
   useEffect(()=>{
     if(!s.hasOwnProperty("present")) onUpdate({
@@ -865,6 +934,10 @@ function SessionModal({student,session:s,keywords,centerName,date,todayDay,goals
         </div>
 
         <div style={{padding:"14px 16px 0"}}>
+          {kioskStatus&&<div style={{display:"flex",alignItems:"center",gap:8,background:kioskStatus.checkedOut?"#f8fafc":"#f0fdf4",border:`1.5px solid ${kioskStatus.checkedOut?"#e2e8f0":"#86efac"}`,borderRadius:10,padding:"8px 12px",marginBottom:12,fontSize:12,fontWeight:700,color:kioskStatus.checkedOut?"#475569":"#15803d"}}>
+            {kioskStatus.checkedOut?"🔵":"🟢"} Kiosk: checked in {new Date(kioskStatus.checkedIn).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit"})}
+            {kioskStatus.checkedOut?` → out ${new Date(kioskStatus.checkedOut).toLocaleTimeString("en-CA",{hour:"numeric",minute:"2-digit"})}`:""} · {kioskStatus.minutes} min
+          </div>}
           <SectionLabel label="Attendance"/>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
             {[{v:true,label:"✓  Present",bg:"#f0fdf4",border:"#86efac",c:"#16a34a"},{v:false,label:"✗  Absent",bg:"#fef2f2",border:"#fca5a5",c:"#dc2626"}].map(opt=>(
@@ -1472,7 +1545,7 @@ function GoalModal({student,subject,goal,onSave,onClose}) {
 }
 
 // ─── Students Tab ─────────────────────────────────────────────────
-function StudentsTab({students,onEdit,onReload}) {
+function StudentsTab({students,onEdit,onToggleStatus,onReload}) {
   const [search,setSearch]=useState("");
   const [showInactive,setShowInactive]=useState(false);
   const filtered=students.filter(s=>s.name.toLowerCase().includes(search.toLowerCase()));
@@ -1493,6 +1566,7 @@ function StudentsTab({students,onEdit,onReload}) {
               <div style={{fontWeight:700,color:"#1e293b",fontSize:14,display:"flex",alignItems:"center",gap:6}}>
                 {s.name}
                 {s.status==="inactive" && <span style={{fontSize:9,color:"#dc2626",background:"#fef2f2",borderRadius:8,padding:"1px 7px",fontWeight:700}}>INACTIVE</span>}
+                {s.status!=="inactive" && !s.mathEnabled && !s.readingEnabled && <span style={{fontSize:9,color:"#ea580c",background:"#fff7ed",borderRadius:8,padding:"1px 7px",fontWeight:700}}>🆕 NEEDS SETUP</span>}
               </div>
               <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{s.grade}</div>
               <div style={{display:"flex",gap:5,marginTop:5,flexWrap:"wrap"}}>
@@ -1504,6 +1578,10 @@ function StudentsTab({students,onEdit,onReload}) {
                 {s.readingEnabled&&`Read: ${s.readingScheduleDays.join(",")||"—"}`}
               </div>
             </div>
+            <button onClick={e=>{e.stopPropagation(); onToggleStatus&&onToggleStatus(s);}}
+              style={{border:"none",background:s.status==="inactive"?"#f0fdf4":"#fef2f2",color:s.status==="inactive"?"#16a34a":"#dc2626",borderRadius:8,padding:"6px 10px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+              {s.status==="inactive"?"▶️ Activate":"⏸️ Deactivate"}
+            </button>
             <span style={{color:"#cbd5e1",fontSize:20}}>›</span>
           </div>
         ))}
