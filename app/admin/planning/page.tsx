@@ -85,9 +85,27 @@ async function upsertStudent(student: any) {
   if (error) throw error
 }
 
-async function setStudentStatus(id: string, status: string) {
+async function setStudentStatus(id: string, status: string, kumonStudentId: any) {
+  // 1) Planning side
   const { error } = await supabase.from('kumon_students').update({ status }).eq('id', id)
   if (error) throw error
+  // 2) Booking portal side via the kumon_student_id bridge
+  //    (mirrors the booking admin's own archive/reactivate flow)
+  if (!kumonStudentId) return { bookingSynced: false, reason: "no Kumon ID on this student" }
+  const { data: bookingRows, error: e2 } = await supabase.from('students')
+    .select('id').eq('kumon_student_id', kumonStudentId)
+  if (e2 || !bookingRows?.length) return { bookingSynced: false, reason: "no linked booking student" }
+  const bookingStatus = status === 'inactive' ? 'archived' : 'active'
+  const today = new Date().toISOString().split('T')[0]
+  for (const b of bookingRows) {
+    await supabase.from('students').update({ status: bookingStatus }).eq('id', b.id)
+    if (status === 'inactive') {
+      await supabase.from('sessions').update({ status: 'cancelled' })
+        .eq('student_id', b.id).gte('session_date', today).eq('status', 'scheduled')
+      await supabase.from('recurring_schedules').update({ is_active: false }).eq('student_id', b.id)
+    }
+  }
+  return { bookingSynced: true }
 }
 
 async function deleteStudent(id: string) {
@@ -594,9 +612,10 @@ export default function AdminPlanning() {
               onToggleStatus={async s=>{
                 const next = s.status==="inactive" ? "active" : "inactive";
                 try {
-                  await setStudentStatus(s.id, next);
+                  const res = await setStudentStatus(s.id, next, s.kumonStudentId);
                   setStudents(prev=>prev.map(x=>x.id===s.id?{...x,status:next}:x));
-                  showToast(next==="active" ? `✅ ${s.name} is active` : `⏸️ ${s.name} marked inactive`);
+                  const base = next==="active" ? `✅ ${s.name} is active` : `⏸️ ${s.name} marked inactive`;
+                  showToast(res.bookingSynced ? base + " · booking portal synced" : base + ` · planning only (${res.reason})`);
                 } catch(e){ showToast("Update failed: "+e.message,"error"); }
               }}
               onReload={async(inc)=>{ try{ setStudents(await fetchStudents(inc)); } catch(e){ showToast("Reload failed: "+e.message,"error"); } }} />
