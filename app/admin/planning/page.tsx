@@ -883,6 +883,10 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 
 
 // ─── Record Book View — paper record sheet style ────────────────
+// Layout mirrors the Kumon record book exactly:
+// Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
+// Score boxes map to individual worksheets done that day.
+// Circle = corrections verified for that worksheet.
 function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
   const fmt = ds => new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{month:"short",year:"numeric"});
   const day = new Date(selectedDate+"T12:00:00").getDate();
@@ -892,6 +896,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
       <div style={{fontWeight:700,marginTop:8,fontSize:14}}>No students scheduled</div>
     </div>
   );
+  const MAX_SCORE_COLS = 10;
   return (
     <div style={{display:"flex",flexDirection:"column",gap:16}}>
       {students.map(s=>{
@@ -899,13 +904,11 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
         const mPlan = plans[planKey(s.id,"math",selectedDate)];
         const rPlan = plans[planKey(s.id,"reading",selectedDate)];
         return (
-          <div key={s.id} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden"}}>
-            {/* Header */}
-            <div style={{background:"#1e3a8a",color:"white",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div key={s.id} onClick={()=>onOpen(s.id)} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden",cursor:"pointer"}}>
+            <div style={{background:"#1e3a8a",color:"white",padding:"7px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <span style={{fontWeight:800,fontSize:13}}>{s.name}</span>
-              <span style={{fontSize:11,opacity:0.8}}>{fmt(selectedDate)} · {s.grade}</span>
+              <span style={{fontSize:11,opacity:0.8}}>{fmt(selectedDate)} · {s.grade||"—"}</span>
             </div>
-            {/* Record sheet per subject */}
             {[s.mathEnabled&&{sub:"math",label:"Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet,data:sess.math,plan:mPlan},
               s.readingEnabled&&{sub:"reading",label:"Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet,data:sess.reading,plan:rPlan}]
               .filter(Boolean).map(({sub,label,color,level,ws,data,plan})=>{
@@ -914,85 +917,73 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
               const circled = data?.circled||[];
               const fromLevel = data?.fromLevel||plan?.level||level;
               const fromWs = data?.fromWorksheet||plan?.start_ws||ws;
-              const wsItems = getWsItems(fromLevel,fromWs,done,sub);
-              const MAX_COLS = 10;
-              // Build rows: each row = one worksheet entry (date, level, ws#, time, up to 10 score boxes)
-              // For the record book, each planned/done WS is one row
-              const plannedCount = plan?.ws_count || (sub==="math"?s.mathClassWS:s.readingClassWS) || 0;
-              const totalRows = Math.max(done, plannedCount, 3); // show at least 3 blank rows
+              const wsItems = getWsItems(fromLevel,fromWs,Math.max(done,1),sub);
+              const plannedCount = plan?.ws_count||(sub==="math"?s.mathClassWS:s.readingClassWS)||0;
+              const colCount = Math.max(done, plannedCount, 1);
+              const timePerWS = (data?.timeMinutes && done) ? (parseFloat(data.timeMinutes)/done).toFixed(1) : null;
               return (
-                <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
-                  <div style={{fontSize:10,fontWeight:800,color,padding:"4px 10px",background:color+"0a",letterSpacing:0.5}}>{label.toUpperCase()} — Subject</div>
+                <div key={sub} style={{borderTop:`2px solid ${color}33`}}>
+                  <div style={{fontSize:10,fontWeight:800,color,padding:"3px 10px",background:color+"0a"}}>{label}</div>
                   <div style={{overflowX:"auto"}}>
-                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:340}}>
+                    <table style={{borderCollapse:"collapse",fontSize:11,width:"100%"}}>
                       <thead>
-                        <tr style={{background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0"}}>
-                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:28,borderRight:"1px solid #e2e8f0"}}>Date</th>
-                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:36,borderRight:"1px solid #e2e8f0"}}>Level</th>
-                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:32,borderRight:"1px solid #e2e8f0"}}>No.</th>
-                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:32,borderRight:"1px solid #e2e8f0"}}>Time</th>
-                          {Array.from({length:MAX_COLS},(_,i)=>(
-                            <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:26,borderRight:i<MAX_COLS-1?"1px solid #f1f5f9":"none"}}>{i+1}</th>
+                        <tr style={{background:"#f8fafc"}}>
+                          {["Date","Level","No.","Time",...Array.from({length:MAX_SCORE_COLS},(_,i)=>i+1)].map((h,i)=>(
+                            <th key={i} style={{padding:"4px 4px",textAlign:"center",color:"#64748b",fontWeight:700,
+                              borderRight:"1px solid #e2e8f0",borderBottom:"1.5px solid #e2e8f0",
+                              minWidth:i<4?30:24,whiteSpace:"nowrap",fontSize:i>=4?10:11}}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {Array.from({length:totalRows},(_,i)=>{
-                          const item = wsItems[i];
-                          const score = scores[i];
-                          const isCircled = circled[i];
-                          const hasData = i < done;
-                          return (
-                            <tr key={i} onClick={()=>onOpen(s.id)}
-                              style={{borderBottom:"1px solid #f1f5f9",cursor:"pointer",background:hasData?(isCircled?"#f0fdf4":score<100?"#fffbeb":"white"):"white"}}>
-                              <td style={{padding:"5px 4px",textAlign:"center",borderRight:"1px solid #e2e8f0",fontWeight:hasData?700:400,color:hasData?"#1e293b":"#cbd5e1"}}>
-                                {hasData?day:""}
+                        {/* One row = today's session for this subject */}
+                        <tr style={{background:done>0?(circled.filter(Boolean).length===done?"#f0fdf4":scores.some(sc=>sc<100)?"#fffbeb":"white"):"white",
+                          borderBottom:"1px solid #f1f5f9"}}>
+                          <td style={{padding:"6px 4px",textAlign:"center",fontWeight:700,color:done?"#1e293b":"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>{done?day:plannedCount?day:""}</td>
+                          <td style={{padding:"6px 4px",textAlign:"center",fontWeight:700,color:done?color:plannedCount?"#94a3b8":"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>{fromLevel}</td>
+                          <td style={{padding:"6px 4px",textAlign:"center",fontWeight:700,color:done?"#1e293b":plannedCount?"#94a3b8":"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>{fromWs}</td>
+                          <td style={{padding:"6px 4px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap"}}>{timePerWS?`${timePerWS}m`:""}</td>
+                          {Array.from({length:MAX_SCORE_COLS},(_,i)=>{
+                            const wsItem = wsItems[i];
+                            const sc = scores[i];
+                            const isCircled = circled[i];
+                            const planned = i < plannedCount;
+                            const hasDone = i < done;
+                            return (
+                              <td key={i} style={{padding:"3px 2px",textAlign:"center",borderRight:i<MAX_SCORE_COLS-1?"1px solid #f1f5f9":"none",
+                                background:hasDone&&isCircled?"#dcfce7":hasDone&&sc<100?"#fef9c3":"transparent"}}>
+                                {hasDone ? (
+                                  <span title={wsItem?`${wsItem.level}${wsItem.wsNum}`:""} style={{
+                                    display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                    width:22,height:22,borderRadius:"50%",fontSize:11,fontWeight:800,
+                                    border:isCircled?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
+                                    background:isCircled?"#f0fdf4":sc<100?"#fef9c3":"white",
+                                    color:isCircled?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151",
+                                  }}>{sc!=null?sc:""}</span>
+                                ) : planned ? (
+                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                    width:22,height:22,borderRadius:"50%",border:"1.5px dashed #cbd5e1",
+                                    fontSize:9,color:"#94a3b8"}}>{wsItem?wsItem.wsNum:""}</span>
+                                ) : null}
                               </td>
-                              <td style={{padding:"5px 4px",textAlign:"center",fontWeight:700,color:hasData?color:"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>
-                                {hasData&&item?item.level:""}
-                              </td>
-                              <td style={{padding:"5px 4px",textAlign:"center",fontWeight:700,color:hasData?"#1e293b":"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>
-                                {hasData&&item?item.wsNum:""}
-                              </td>
-                              <td style={{padding:"5px 4px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0"}}>
-                                {hasData&&data?.timeMinutes?`${data.timeMinutes}m`:""}
-                              </td>
-                              {Array.from({length:MAX_COLS},(_,j)=>{
-                                const isThisWs = j===0 && hasData;
-                                const sc = hasData && j===0 ? score : undefined;
-                                const showCircle = isThisWs && isCircled;
-                                return (
-                                  <td key={j} style={{
-                                    padding:"3px 2px",textAlign:"center",
-                                    borderRight:j<MAX_COLS-1?"1px solid #f1f5f9":"none",
-                                    fontWeight:800,fontSize:12,
-                                    color:sc!=null?(sc<100?"#d97706":"#1e293b"):"#e2e8f0",
-                                  }}>
-                                    {sc!=null?(
-                                      <span style={{
-                                        display:"inline-block",
-                                        border:showCircle?`2px solid #16a34a`:"2px solid transparent",
-                                        borderRadius:"50%",
-                                        width:22,height:22,lineHeight:"18px",
-                                        background:showCircle?"#f0fdf4":"transparent",
-                                        color:showCircle?"#16a34a":sc<100?"#d97706":"#1e293b",
-                                      }}>{sc}</span>
-                                    ):""}
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          );
-                        })}
+                            );
+                          })}
+                        </tr>
+                        {/* Blank row for next session (visual continuity like paper) */}
+                        <tr style={{opacity:0.35}}>
+                          {Array.from({length:4+MAX_SCORE_COLS},(_,i)=>(
+                            <td key={i} style={{padding:"5px 4px",borderRight:"1px solid #f1f5f9",height:28}}/>
+                          ))}
+                        </tr>
                       </tbody>
                       <tfoot>
                         <tr style={{background:"#f8fafc",borderTop:"1.5px solid #e2e8f0"}}>
-                          <td colSpan={4} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
-                            {done>0?`${done} WS done${data?.timeMinutes?` · ${data.timeMinutes}m total`:""}`:plannedCount?`Plan: ${plannedCount} WS`:"No plan set"}
+                          <td colSpan={4} style={{padding:"3px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
+                            {done>0?`${done}/${plannedCount||"?"} WS · ${data?.timeMinutes||0}m`:`Plan: ${plannedCount} WS`}
                           </td>
-                          <td colSpan={MAX_COLS} style={{padding:"4px 8px",fontSize:10,color:color,fontWeight:700,textAlign:"right"}}>
-                            {fromLevel}{fromWs}{done>0&&wsItems.length?` → ${wsItems[wsItems.length-1].level}${wsItems[wsItems.length-1].wsNum}`:""}
-                            {circled.filter(Boolean).length===done&&done>0?" · ⭕ All corrected":""}
+                          <td colSpan={MAX_SCORE_COLS} style={{padding:"3px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>
+                            {done>0&&wsItems[done-1]?`→ ${wsItems[done-1].level}${wsItems[done-1].wsNum}`:""}
+                            {circled.filter(Boolean).length===done&&done>0?" ⭕":""}
                           </td>
                         </tr>
                       </tfoot>
