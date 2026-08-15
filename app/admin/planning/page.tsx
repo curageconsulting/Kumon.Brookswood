@@ -661,9 +661,7 @@ export default function AdminPlanning() {
       <div style={{maxWidth:700,margin:"0 auto",padding:14}}>
         {loading ? (
           <div style={{textAlign:"center",padding:48,color:"#94a3b8"}}>Loading students…</div>
-        ) : viewMode==="record" ? (
-        <RecordBookView students={allTodayStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} />
-      ) : <>
+        ) : <>
           {tab==="today" && (
             <TodayTab
               classStudents={classStudents} allTodayStudents={todayStudents} todayDay={todayDay}
