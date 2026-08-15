@@ -661,7 +661,9 @@ export default function AdminPlanning() {
       <div style={{maxWidth:700,margin:"0 auto",padding:14}}>
         {loading ? (
           <div style={{textAlign:"center",padding:48,color:"#94a3b8"}}>Loading students…</div>
-        ) : <>
+        ) : viewMode==="record" ? (
+        <RecordBookView students={allTodayStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} />
+      ) : <>
           {tab==="today" && (
             <TodayTab
               classStudents={classStudents} allTodayStudents={todayStudents} todayDay={todayDay}
@@ -784,7 +786,7 @@ export default function AdminPlanning() {
 
 // ─── Today Tab ───────────────────────────────────────────────────
 function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications}) {
-  const [viewMode,setViewMode] = useState("cards"); // "cards" | "table"
+  const [viewMode,setViewMode] = useState("cards"); // "cards" | "table" | "record"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
   const presentCount = classStudents.filter(s=>getSession(s.id).present).length;
@@ -849,10 +851,13 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
       <div style={{display:"flex",gap:6,marginBottom:14}}>
         <button onClick={()=>setViewMode("cards")} style={{flex:1,padding:"8px",border:"none",borderRadius:8,fontWeight:700,fontSize:12,cursor:"pointer",background:viewMode==="cards"?"#1e40af":"#f1f5f9",color:viewMode==="cards"?"white":"#64748b"}}>🪪 Cards</button>
         <button onClick={()=>setViewMode("table")} style={{flex:1,padding:"8px",border:"none",borderRadius:8,fontWeight:700,fontSize:12,cursor:"pointer",background:viewMode==="table"?"#1e40af":"#f1f5f9",color:viewMode==="table"?"white":"#64748b"}}>📊 Table</button>
+        <button onClick={()=>setViewMode("record")} style={{flex:1,padding:"8px",border:"none",borderRadius:8,fontWeight:700,fontSize:12,cursor:"pointer",background:viewMode==="record"?"#1e40af":"#f1f5f9",color:viewMode==="record"?"white":"#64748b"}}>📋 Record</button>
       </div>
 
       {viewMode==="table" ? (
         <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
+      ) : viewMode==="record" ? (
+        <RecordBookView students={allTodayStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} />
       ) : <>
         {classStudents.length===0 ? (
           <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
@@ -872,6 +877,133 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
           </div>
         </>}
       </>}
+    </div>
+  );
+}
+
+
+// ─── Record Book View — paper record sheet style ────────────────
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
+  const fmt = ds => new Date(ds+"T12:00:00").toLocaleDateString("en-CA",{month:"short",year:"numeric"});
+  const day = new Date(selectedDate+"T12:00:00").getDate();
+  if (!students.length) return (
+    <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
+      <div style={{fontSize:40}}>📭</div>
+      <div style={{fontWeight:700,marginTop:8,fontSize:14}}>No students scheduled</div>
+    </div>
+  );
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {students.map(s=>{
+        const sess = getSession(s.id);
+        const mPlan = plans[planKey(s.id,"math",selectedDate)];
+        const rPlan = plans[planKey(s.id,"reading",selectedDate)];
+        return (
+          <div key={s.id} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden"}}>
+            {/* Header */}
+            <div style={{background:"#1e3a8a",color:"white",padding:"6px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span style={{fontWeight:800,fontSize:13}}>{s.name}</span>
+              <span style={{fontSize:11,opacity:0.8}}>{fmt(selectedDate)} · {s.grade}</span>
+            </div>
+            {/* Record sheet per subject */}
+            {[s.mathEnabled&&{sub:"math",label:"Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet,data:sess.math,plan:mPlan},
+              s.readingEnabled&&{sub:"reading",label:"Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet,data:sess.reading,plan:rPlan}]
+              .filter(Boolean).map(({sub,label,color,level,ws,data,plan})=>{
+              const done = data?.done||0;
+              const scores = data?.scores||[];
+              const circled = data?.circled||[];
+              const fromLevel = data?.fromLevel||plan?.level||level;
+              const fromWs = data?.fromWorksheet||plan?.start_ws||ws;
+              const wsItems = getWsItems(fromLevel,fromWs,done,sub);
+              const MAX_COLS = 10;
+              // Build rows: each row = one worksheet entry (date, level, ws#, time, up to 10 score boxes)
+              // For the record book, each planned/done WS is one row
+              const plannedCount = plan?.ws_count || (sub==="math"?s.mathClassWS:s.readingClassWS) || 0;
+              const totalRows = Math.max(done, plannedCount, 3); // show at least 3 blank rows
+              return (
+                <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
+                  <div style={{fontSize:10,fontWeight:800,color,padding:"4px 10px",background:color+"0a",letterSpacing:0.5}}>{label.toUpperCase()} — Subject</div>
+                  <div style={{overflowX:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,minWidth:340}}>
+                      <thead>
+                        <tr style={{background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0"}}>
+                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:28,borderRight:"1px solid #e2e8f0"}}>Date</th>
+                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:36,borderRight:"1px solid #e2e8f0"}}>Level</th>
+                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:32,borderRight:"1px solid #e2e8f0"}}>No.</th>
+                          <th style={{padding:"4px 6px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:32,borderRight:"1px solid #e2e8f0"}}>Time</th>
+                          {Array.from({length:MAX_COLS},(_,i)=>(
+                            <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#64748b",fontWeight:700,minWidth:26,borderRight:i<MAX_COLS-1?"1px solid #f1f5f9":"none"}}>{i+1}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Array.from({length:totalRows},(_,i)=>{
+                          const item = wsItems[i];
+                          const score = scores[i];
+                          const isCircled = circled[i];
+                          const hasData = i < done;
+                          return (
+                            <tr key={i} onClick={()=>onOpen(s.id)}
+                              style={{borderBottom:"1px solid #f1f5f9",cursor:"pointer",background:hasData?(isCircled?"#f0fdf4":score<100?"#fffbeb":"white"):"white"}}>
+                              <td style={{padding:"5px 4px",textAlign:"center",borderRight:"1px solid #e2e8f0",fontWeight:hasData?700:400,color:hasData?"#1e293b":"#cbd5e1"}}>
+                                {hasData?day:""}
+                              </td>
+                              <td style={{padding:"5px 4px",textAlign:"center",fontWeight:700,color:hasData?color:"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>
+                                {hasData&&item?item.level:""}
+                              </td>
+                              <td style={{padding:"5px 4px",textAlign:"center",fontWeight:700,color:hasData?"#1e293b":"#cbd5e1",borderRight:"1px solid #e2e8f0"}}>
+                                {hasData&&item?item.wsNum:""}
+                              </td>
+                              <td style={{padding:"5px 4px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0"}}>
+                                {hasData&&data?.timeMinutes?`${data.timeMinutes}m`:""}
+                              </td>
+                              {Array.from({length:MAX_COLS},(_,j)=>{
+                                const isThisWs = j===0 && hasData;
+                                const sc = hasData && j===0 ? score : undefined;
+                                const showCircle = isThisWs && isCircled;
+                                return (
+                                  <td key={j} style={{
+                                    padding:"3px 2px",textAlign:"center",
+                                    borderRight:j<MAX_COLS-1?"1px solid #f1f5f9":"none",
+                                    fontWeight:800,fontSize:12,
+                                    color:sc!=null?(sc<100?"#d97706":"#1e293b"):"#e2e8f0",
+                                  }}>
+                                    {sc!=null?(
+                                      <span style={{
+                                        display:"inline-block",
+                                        border:showCircle?`2px solid #16a34a`:"2px solid transparent",
+                                        borderRadius:"50%",
+                                        width:22,height:22,lineHeight:"18px",
+                                        background:showCircle?"#f0fdf4":"transparent",
+                                        color:showCircle?"#16a34a":sc<100?"#d97706":"#1e293b",
+                                      }}>{sc}</span>
+                                    ):""}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{background:"#f8fafc",borderTop:"1.5px solid #e2e8f0"}}>
+                          <td colSpan={4} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
+                            {done>0?`${done} WS done${data?.timeMinutes?` · ${data.timeMinutes}m total`:""}`:plannedCount?`Plan: ${plannedCount} WS`:"No plan set"}
+                          </td>
+                          <td colSpan={MAX_COLS} style={{padding:"4px 8px",fontSize:10,color:color,fontWeight:700,textAlign:"right"}}>
+                            {fromLevel}{fromWs}{done>0&&wsItems.length?` → ${wsItems[wsItems.length-1].level}${wsItems[wsItems.length-1].wsNum}`:""}
+                            {circled.filter(Boolean).length===done&&done>0?" · ⭕ All corrected":""}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }
