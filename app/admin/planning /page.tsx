@@ -486,6 +486,7 @@ export default function AdminPlanning() {
   const [notifOn,setNotifOn] = useState(typeof Notification!=="undefined" && Notification.permission==="granted");
   const [notified,setNotified] = useState({});
   const [planModal,setPlanModal] = useState(null); // studentId | null
+  const [monthSessions,setMonthSessions] = useState({});
   const [sessionModal,setSessionModal] = useState(null);
   const [editModal,setEditModal] = useState(null);
   const [loading,setLoading] = useState(true);
