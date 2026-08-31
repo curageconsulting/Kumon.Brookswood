@@ -54,6 +54,15 @@ function Clock() {
   )
 }
 
+// FIX 1: Get today's date in LOCAL time (not UTC) so Friday doesn't flip to Saturday at 5pm Pacific
+function getLocalDateStr() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export default function KioskPage() {
   const [sessions, setSessions] = useState<SessionWithStudent[]>([])
   const [loading, setLoading] = useState(true)
@@ -68,7 +77,6 @@ export default function KioskPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Clear recent action after 3 seconds
   useEffect(() => {
     if (recentAction) {
       const t = setTimeout(() => setRecentAction(null), 3000)
@@ -77,7 +85,9 @@ export default function KioskPage() {
   }, [recentAction])
 
   async function load() {
-    const today = new Date().toISOString().slice(0, 10)
+    // FIX 1: Use local date string so 5pm Friday stays Friday
+    const today = getLocalDateStr()
+
     const { data } = await supabase
       .from('sessions')
       .select(`
@@ -87,7 +97,20 @@ export default function KioskPage() {
       .eq('session_date', today)
       .in('status', ['scheduled', 'makeup'])
       .order('start_time', { ascending: true })
-    setSessions((data || []) as any)
+
+    // FIX 2: Deduplicate by student id — keep one session per student
+    // (two-subject students create two booking rows; show them once on the kiosk)
+    const seen = new Set<string>()
+    const deduped = (data || []).filter((s: any) => {
+      const sid = s.student?.id
+      if (!sid || seen.has(sid)) return false
+      seen.add(sid)
+      return true
+    })
+
+    // FIX 3: Never remove students for being late — keep ALL today's sessions
+    // regardless of start_time so late arrivals can still check in
+    setSessions(deduped as any)
     setLoading(false)
   }
 
@@ -97,7 +120,6 @@ export default function KioskPage() {
     await supabase.from('sessions')
       .update({ checked_in_at: now })
       .eq('id', sessionId)
-    // Update local state immediately
     setSessions(prev => prev.map(s =>
       s.id === sessionId ? { ...s, checked_in_at: now } : s
     ))
@@ -111,7 +133,6 @@ export default function KioskPage() {
     await supabase.from('sessions')
       .update({ checked_out_at: now })
       .eq('id', sessionId)
-    // Update local state immediately
     setSessions(prev => prev.map(s =>
       s.id === sessionId ? { ...s, checked_out_at: now } : s
     ))
@@ -196,7 +217,7 @@ export default function KioskPage() {
               </div>
             )}
 
-            {/* Not Yet Arrived */}
+            {/* Not Yet Arrived — always shown, never filtered by time */}
             {notArrived.length > 0 && (
               <div>
                 <div className="flex items-center gap-3 mb-3">
