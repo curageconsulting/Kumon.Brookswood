@@ -113,6 +113,25 @@ async function deleteStudent(id: string) {
   if (error) throw error
 }
 
+async function fetchSessionsForMonth(fromDate: string, toDate: string) {
+  const { data, error } = await supabase.from('kumon_sessions').select('*')
+    .gte('session_date', fromDate).lte('session_date', toDate)
+  if (error) throw error
+  const out: any = {}
+  for (const r of (data || [])) {
+    out[r.student_id + '|' + r.session_date] = {
+      present: r.present,
+      math: r.math_data || {},
+      reading: r.reading_data || {},
+      kumonMoney: r.kumon_money,
+      moneyTasks: r.money_tasks || undefined,
+      selectedKeywords: r.selected_keywords || [],
+      customComment: r.custom_comment || '',
+    }
+  }
+  return out
+}
+
 async function fetchSessionsForDate(dateStr: string) {
   const { data, error } = await supabase.from('kumon_sessions').select('*').eq('session_date', dateStr)
   if (error) throw error
@@ -501,6 +520,14 @@ export default function AdminPlanning() {
       catch(e){ console.error(e); }
       try { setKiosk(await fetchKioskStatus(selectedDate)); }
       catch(e){ console.warn("Kiosk status unavailable:", e.message); }
+      try {
+        const ref = new Date(selectedDate+"T12:00:00");
+        const y = ref.getFullYear(), m = ref.getMonth();
+        const from = `${y}-${String(m+1).padStart(2,"0")}-01`;
+        const last = new Date(y, m+1, 0).getDate();
+        const to = `${y}-${String(m+1).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
+        setMonthSessions(await fetchSessionsForMonth(from, to));
+      } catch(e){ console.warn("Month sessions unavailable:", e.message); }
     })();
   },[selectedDate]);
 
@@ -669,6 +696,7 @@ export default function AdminPlanning() {
               getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans} kiosk={kiosk}
               allStudents={students} onSetup={setEditModal}
               overstayList={overstayList} notifOn={notifOn} onEnableNotifications={enableNotifications}
+              monthSessions={monthSessions}
             />
           )}
           {tab==="plan" && (
@@ -783,7 +811,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={}}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table" | "record"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -855,7 +883,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
       {viewMode==="table" ? (
         <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
       ) : viewMode==="record" ? (
-        <RecordBookView students={allTodayStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} />
+        <RecordBookView students={students} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions} />
       ) : <>
         {classStudents.length===0 ? (
           <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
@@ -885,7 +913,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 // Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
 // Score boxes map to individual worksheets done that day.
 // Circle = corrections verified for that worksheet.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={}}) {
   const ref = new Date(selectedDate+"T12:00:00")
   const year = ref.getFullYear(), month = ref.getMonth()
   const daysInMonth = new Date(year, month+1, 0).getDate()
@@ -931,7 +959,9 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={}}) {
                       const dayLabel = ALL_DAYS_SHORT[dow]
                       const plan = plans[planKey(s.id,sub,dateStr)]
                       const isToday = dateStr===selectedDate
-                      const sess = isToday ? getSession(s.id) : null
+                      const monthKey = s.id+"|"+dateStr
+                      const monthSess = monthSessions[monthKey]
+                      const sess = isToday ? getSession(s.id) : monthSess
                       const sessData = sess ? (sub==="math"?sess.math:sess.reading) : null
                       const done = sessData?.done||0
                       const scores = sessData?.scores||[]
