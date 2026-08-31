@@ -113,6 +113,23 @@ async function deleteStudent(id: string) {
   if (error) throw error
 }
 
+async function fetchSessionsForMonth(fromDate: string, toDate: string) {
+  const { data, error } = await supabase.from('kumon_sessions').select('*')
+    .gte('session_date', fromDate).lte('session_date', toDate)
+  if (error) throw error
+  const out: any = {}
+  for (const r of (data || [])) {
+    out[r.student_id + '|' + r.session_date] = {
+      present: r.present,
+      math: r.math_data || {},
+      reading: r.reading_data || {},
+      kumonMoney: r.kumon_money,
+      moneyTasks: r.money_tasks || undefined,
+    }
+  }
+  return out
+}
+
 async function fetchSessionsForDate(dateStr: string) {
   const { data, error } = await supabase.from('kumon_sessions').select('*').eq('session_date', dateStr)
   if (error) throw error
@@ -500,8 +517,6 @@ export default function AdminPlanning() {
     (async()=>{
       try { setSessionsToday(await fetchSessionsForDate(selectedDate)); }
       catch(e){ console.error(e); }
-      try { setKiosk(await fetchKioskStatus(selectedDate)); }
-      catch(e){ console.warn("Kiosk status unavailable:", e.message); }
       try {
         const ref = new Date(selectedDate+"T12:00:00");
         const y = ref.getFullYear(), m = ref.getMonth();
@@ -509,7 +524,9 @@ export default function AdminPlanning() {
         const last = new Date(y, m+1, 0).getDate();
         const to = `${y}-${String(m+1).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
         setMonthSessions(await fetchSessionsForMonth(from, to));
-      } catch(e){ console.warn("Month sessions unavailable:", e.message); }
+      } catch(e){ console.warn("Month sessions:", e.message); }
+      try { setKiosk(await fetchKioskStatus(selectedDate)); }
+      catch(e){ console.warn("Kiosk status unavailable:", e.message); }
     })();
   },[selectedDate]);
 
@@ -900,22 +917,17 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
   const daysInMonth = new Date(year, month+1, 0).getDate()
   const monthLabel = ref.toLocaleDateString("en-CA",{month:"long",year:"numeric"})
   const MAX_SCORE_COLS = 10
-  const ALL_DAYS_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+  const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
   const monthStr = `${year}-${String(month+1).padStart(2,"0")}`
-  const activeStudents = students.filter(s=>s.status!=="inactive")
-  if (!activeStudents.length) return (
-    <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
-      <div style={{fontSize:40}}>📭</div>
-      <div style={{fontWeight:700,marginTop:8,fontSize:14}}>No students</div>
-    </div>
-  )
+  const active = students.filter(s=>s.status!=="inactive")
+  if (!active.length) return <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>No students</div>
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
-      {activeStudents.map(s=>(
+      {active.map(s=>(
         <div key={s.id} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden"}}>
           <div style={{background:"#1e3a8a",color:"white",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{fontWeight:800,fontSize:14}}>{s.name}</div>
-            <div style={{fontSize:11,opacity:0.75}}>{monthLabel} · {s.grade||"—"}</div>
+            <span style={{fontWeight:800,fontSize:14}}>{s.name}</span>
+            <span style={{fontSize:11,opacity:0.75}}>{monthLabel} · {s.grade||"—"}</span>
           </div>
           {[s.mathEnabled&&{sub:"math",label:"Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet},
             s.readingEnabled&&{sub:"reading",label:"Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet}]
@@ -923,12 +935,11 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
             <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
               <div style={{fontSize:10,fontWeight:800,color,padding:"3px 12px",background:color+"0a"}}>{label.toUpperCase()}</div>
               <div style={{overflowX:"auto"}}>
-                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:380}}>
+                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:400}}>
                   <thead>
                     <tr style={{background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0"}}>
                       {["Date","Day","C/H","Level","No.","Time",...Array.from({length:MAX_SCORE_COLS},(_,i)=>i+1)].map((h,i)=>(
-                        <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#475569",fontWeight:700,
-                          borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap",minWidth:i<6?28:22,fontSize:i>=6?10:11}}>{h}</th>
+                        <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#475569",fontWeight:700,borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap",minWidth:i<6?26:22,fontSize:i>=6?10:11}}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -937,62 +948,53 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                       const dayNum = di+1
                       const dateStr = `${monthStr}-${String(dayNum).padStart(2,"0")}`
                       const dow = new Date(dateStr+"T12:00:00").getDay()
-                      const dayLabel = ALL_DAYS_SHORT[dow]
+                      const dayLabel = DAY_NAMES[dow]
                       const plan = plans[planKey(s.id,sub,dateStr)]
                       const isToday = dateStr===selectedDate
-                      const monthKey = s.id+"|"+dateStr
-                      const monthSess = monthSessions[monthKey]
-                      const sess = isToday ? getSession(s.id) : monthSess
-                      const sessData = sess ? (sub==="math"?sess.math:sess.reading) : null
-                      const done = sessData?.done||0
-                      const scores = sessData?.scores||[]
-                      const circled = sessData?.circled||[]
-                      const fromLevel = sessData?.fromLevel||plan?.level||level
-                      const fromWs = sessData?.fromWorksheet||plan?.start_ws||ws
+                      const rawSess = isToday ? getSession(s.id) : monthSessions[s.id+"|"+dateStr]
+                      const sd = rawSess ? (sub==="math"?rawSess.math:rawSess.reading) : null
+                      const done = sd?.done||0
+                      const scores = sd?.scores||[]
+                      const circled = sd?.circled||[]
+                      const fromLevel = sd?.fromLevel||plan?.level||level
+                      const fromWs = sd?.fromWorksheet||plan?.start_ws||ws
                       const plannedCount = plan?.ws_count||0
-                      const timePerWS = (sessData?.timeMinutes&&done) ? (parseFloat(sessData.timeMinutes)/done).toFixed(1) : null
+                      const timeMin = sd?.timeMinutes
+                      const timePerWS = (timeMin&&done) ? (parseFloat(timeMin)/done).toFixed(1) : null
                       const wsItems = (done>0||plannedCount>0) ? getWsItems(fromLevel,fromWs,Math.max(done,plannedCount),sub) : []
-                      const isClassDay = sub==="math" ? s.mathScheduleDays?.includes(dayLabel) : s.readingScheduleDays?.includes(dayLabel)
-                      const hasAnything = done>0 || plannedCount>0
-                      const allCircled = done>0 && circled.filter(Boolean).length===done
-                      const hasErrors = scores.some(sc=>sc<100)
-                      const isFuture = dateStr > selectedDate
-                      const rowBg = !hasAnything?"white":allCircled?"#f0fdf4":done>0&&hasErrors?"#fffbeb":done>0?"#f8faff":"#faf5ff"
+                      const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(dayLabel)
+                      const hasAnything = done>0||plannedCount>0
+                      const allCircled = done>0&&circled.filter(Boolean).length===done
+                      const isFuture = dateStr>selectedDate
+                      const rowBg = !hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
                       return (
-                        <tr key={dayNum} onClick={hasAnything||isClassDay?()=>onOpen(s.id):undefined}
+                        <tr key={dayNum}
+                          onClick={hasAnything||isClassDay?()=>onOpen(s.id):undefined}
                           style={{borderBottom:"1px solid #f1f5f9",cursor:hasAnything||isClassDay?"pointer":"default",
-                            background:rowBg,opacity:isFuture&&!hasAnything?0.45:1,
-                            outline:isToday?"2px solid "+color:"none",outlineOffset:isToday?"-1px":"0"}}>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:isToday?800:500,
-                            color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0"}}>{dayNum}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",color:"#94a3b8",borderRight:"1px solid #e2e8f0",fontSize:9}}>{dayLabel}</td>
+                            background:rowBg,opacity:isFuture&&!hasAnything?0.4:1,
+                            outline:isToday?"2px solid "+color:"none",outlineOffset:"-1px"}}>
+                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0"}}>{dayNum}</td>
+                          <td style={{padding:"4px 3px",textAlign:"center",color:"#94a3b8",fontSize:9,borderRight:"1px solid #e2e8f0"}}>{dayLabel}</td>
                           <td style={{padding:"4px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
                             {isClassDay?<span style={{fontSize:9,fontWeight:800,color,background:color+"18",borderRadius:4,padding:"1px 4px"}}>C</span>
-                              :hasAnything?<span style={{fontSize:9,fontWeight:800,color:"#64748b",background:"#f1f5f9",borderRadius:4,padding:"1px 4px"}}>H</span>:null}
+                              :hasAnything?<span style={{fontSize:9,color:"#64748b",background:"#f1f5f9",borderRadius:4,padding:"1px 4px",fontWeight:700}}>H</span>:null}
                           </td>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,
-                            color:done>0?color:plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromLevel:""}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,
-                            color:done>0?"#1e293b":plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromWs:""}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap"}}>{timePerWS?`${timePerWS}m`:""}</td>
+                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?color:plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromLevel:""}</td>
+                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?"#1e293b":plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromWs:""}</td>
+                          <td style={{padding:"4px 3px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0"}}>{timePerWS?`${timePerWS}m`:""}</td>
                           {Array.from({length:MAX_SCORE_COLS},(_,i)=>{
+                            const sc = scores[i], isCircled = circled[i]
+                            const hasDone = i<done, isPlanned = !hasDone&&i<plannedCount
                             const wsItem = wsItems[i]
-                            const sc = scores[i]
-                            const isCircled = circled[i]
-                            const hasDone = i<done
-                            const isPlanned = !hasDone && i<plannedCount
                             return (
                               <td key={i} style={{padding:"2px 1px",textAlign:"center",borderRight:i<MAX_SCORE_COLS-1?"1px solid #f1f5f9":"none"}}>
                                 {hasDone?(
-                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
-                                    width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,
+                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,
                                     border:isCircled?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
                                     background:isCircled?"#dcfce7":sc<100?"#fef9c3":"white",
                                     color:isCircled?"#16a34a":sc<100?"#d97706":"#374151"}}>{sc!=null?sc:""}</span>
                                 ):isPlanned?(
-                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
-                                    width:20,height:20,borderRadius:"50%",fontSize:8,
-                                    border:"1.5px dashed #cbd5e1",color:"#94a3b8"}}>{wsItem?wsItem.wsNum:""}</span>
+                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:8,border:"1.5px dashed #cbd5e1",color:"#94a3b8"}}>{wsItem?wsItem.wsNum:""}</span>
                                 ):null}
                               </td>
                             )
@@ -1004,11 +1006,9 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                   <tfoot>
                     <tr style={{background:"#f8fafc",borderTop:"1.5px solid #e2e8f0"}}>
                       <td colSpan={6} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
-                        {Object.keys(plans).filter(k=>k.startsWith(s.id+"|"+sub+"|"+monthStr)).length} planned days this month
+                        {Object.values(plans).filter((p:any)=>p.student_id===s.id&&p.subject===sub&&p.plan_date?.startsWith(monthStr)).length} planned days
                       </td>
-                      <td colSpan={MAX_SCORE_COLS} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>
-                        Current: {level}{ws}
-                      </td>
+                      <td colSpan={MAX_SCORE_COLS} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>Current: {level}{ws}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1021,8 +1021,6 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
   )
 }
 
-
-// ─── Day Table View — spreadsheet-style overview of all students ──
 function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate,kiosk={}}) {
   if (students.length===0) return (
     <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
