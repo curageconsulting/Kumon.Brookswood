@@ -1014,20 +1014,26 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
   const autoPopulate = async (s:any, sub:string, startLevel:string, startWs:number, classWS:number, homeworkWS:number) => {
     const rows:any[] = []
     let curLevel = startLevel, curWs = startWs
+    const classDays = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)||[]
+    const hwDays = (sub==="math"?s.mathHomeworkDays:s.readingHomeworkDays)||[]
     for (let di=0;di<daysInMonth;di++) {
       const dayNum = di+1
       const dateStr = `${monthStr}-${String(dayNum).padStart(2,"0")}`
       const dow = new Date(dateStr+"T12:00:00").getDay()
       const dayLabel = DAY_NAMES[dow]
-      const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(dayLabel)
+      const isClassDay = classDays.includes(dayLabel)
+      const isHwDay = hwDays.includes(dayLabel)
+      if (!isClassDay && !isHwDay) continue
       const wsCount = isClassDay ? classWS : homeworkWS
       if (wsCount<=0) continue
       rows.push({id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
-        plan_date:dateStr,level:curLevel,start_ws:curWs,ws_count:wsCount,day_type:isClassDay?"C":"H",note:null})
+        plan_date:dateStr,level:curLevel,start_ws:curWs,ws_count:wsCount,
+        day_type:isClassDay?"C":"H",note:null})
       const nxt = advancePos(curLevel,curWs,wsCount,sub)
       curLevel=nxt.level; curWs=nxt.worksheet
     }
-    await onSavePlan(rows)
+    if (rows.length===0) { setAutoPopModal(null); return; }
+    try { await onSavePlan(rows); } catch(e:any){ console.error("autofill failed:",e); }
     setAutoPopModal(null)
   }
 
@@ -1130,17 +1136,17 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                           background:rowBg,opacity:isFuture&&!hasAnything?0.35:1}}>
 
                           {/* Date */}
-                          <td style={{padding:"3px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0",fontSize:11}}>{dayNum}</td>
+                          <td style={{padding:"5px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0",fontSize:11}}>{dayNum}</td>
                           {/* Day */}
                           <td style={{padding:"3px 3px",textAlign:"center",color:"#94a3b8",fontSize:9,borderRight:"1px solid #e2e8f0"}}>{dayLabel}</td>
 
                           {/* C/H — click to toggle */}
                           <td onClick={()=>{setCell(s,sub,dateStr,plan,sd,{dayType:e.dayType==="C"?"H":"C"});setTimeout(()=>saveRow(s,sub,dateStr,plan,{...sd,...(rowEdits[editKey]||{}),dayType:e.dayType==="C"?"H":"C"}),50)}}
                             style={{padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0",cursor:"pointer"}}>
-                            {hasAnything&&<span style={{fontSize:9,fontWeight:800,
-                              color:e.dayType==="C"?color:"#64748b",
-                              background:e.dayType==="C"?color+"18":"#f1f5f9",
-                              borderRadius:4,padding:"1px 5px"}}>{e.dayType||( isClassDay?"C":"H")}</span>}
+                            <span style={{fontSize:9,fontWeight:800,cursor:"pointer",
+                              color:e.dayType==="C"?color:hasAnything?"#64748b":"#e2e8f0",
+                              background:e.dayType==="C"?color+"18":hasAnything?"#f1f5f9":"transparent",
+                              borderRadius:4,padding:"1px 5px"}}>{e.dayType||(isClassDay?"C":"H")}</span>
                           </td>
 
                           {/* Level — click to edit */}
@@ -1191,7 +1197,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                                   background:hasDone?(isC?"#dcfce7":sc!=null&&sc<100?"#fef9c3":"white"):"transparent"}}>
                                 {hasDone?(
                                   activeCell(field)?(
-                                    <input type="number" inputMode="numeric" value={sc??100} autoFocus
+                                    <input type="number" inputMode="numeric" value={sc??""} autoFocus
                                       onChange={ev=>{const n=[...e.scores];n[i]=ev.target.value===""?null:Math.max(0,Math.min(100,parseInt(ev.target.value)||0));setCell(s,sub,dateStr,plan,sd,{scores:n})}}
                                       onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
                                       onKeyDown={ev=>{
@@ -1201,24 +1207,27 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                                         }
                                         if(ev.key==="Enter")saveRow(s,sub,dateStr,plan,sd)
                                       }}
-                                      style={{width:22,border:"none",outline:"none",background:"transparent",fontSize:10,fontWeight:800,textAlign:"center"}}/>
+                                      style={{width:28,border:"none",outline:"none",background:"transparent",fontSize:11,fontWeight:800,textAlign:"center"}}/>
                                   ):(
-                                    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",gap:1}}>
-                                    <div onClick={()=>{const c=[...e.circled];c[i]=!c[i];setCell(s,sub,dateStr,plan,sd,{circled:c});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),50)}}
-                                      style={{fontSize:7,fontWeight:800,padding:"1px 3px",borderRadius:"3px 3px 0 0",cursor:"pointer",
-                                        background:isC?"#16a34a":"#94a3b8",color:"white",minWidth:20,textAlign:"center"}}
-                                      title="Click to circle/uncircle corrections">
-                                      {isC?"⭕":"○"}
+                                    <div style={{display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer"}}>
+                                      <div onClick={e2=>{e2.stopPropagation();const c=[...e.circled];c[i]=!c[i];setCell(s,sub,dateStr,plan,sd,{circled:c});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),100)}}
+                                        style={{fontSize:8,fontWeight:900,lineHeight:"14px",width:28,textAlign:"center",
+                                          background:isC?"#16a34a":"#e2e8f0",color:isC?"white":"#94a3b8",
+                                          borderRadius:"4px 4px 0 0",userSelect:"none",padding:"1px 0"}}
+                                        title={isC?"Uncheck corrections":"Mark corrections done"}>
+                                        {isC?"✓":"circle"}
+                                      </div>
+                                      <div onClick={e2=>{e2.stopPropagation();focusCell(field)}}
+                                        style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
+                                          width:28,height:20,fontSize:11,fontWeight:800,
+                                          border:isC?"2px solid #16a34a":"1.5px solid #e2e8f0",
+                                          borderTop:"none",borderRadius:"0 0 4px 4px",
+                                          background:isC?"#f0fdf4":sc!=null&&sc<100?"#fef9c3":"white",
+                                          color:isC?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151"}}
+                                        title="Click to enter score">
+                                        {sc!=null?sc:""}
+                                      </div>
                                     </div>
-                                    <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:18,
-                                        border:isC?"2px solid #16a34a":"1.5px solid #e2e8f0",
-                                        borderTop:"none",borderRadius:"0 0 4px 4px",
-                                        background:isC?"#dcfce7":sc!=null&&sc<100?"#fef9c3":"white",
-                                        color:isC?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151",
-                                        fontSize:10,fontWeight:800}}>
-                                      {sc!=null?sc:""}
-                                    </div>
-                                  </div>
                                   )
                                 ):i<(plan?.ws_count||0)?(
                                   <span style={{color:"#cbd5e1",fontSize:10,fontWeight:700}}>—</span>
