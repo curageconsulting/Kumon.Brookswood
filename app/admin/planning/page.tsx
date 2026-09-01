@@ -981,7 +981,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
     // If count changed, resize scores/circled arrays
     if (patch.count !== undefined && patch.count !== cur.count) {
       const n = patch.count
-      next.scores = n>cur.scores.length?[...cur.scores,...Array(n-cur.scores.length).fill(100)]:cur.scores.slice(0,n)
+      next.scores = n>cur.scores.length?[...cur.scores,...Array(n-cur.scores.length).fill(null)]:cur.scores.slice(0,n)
       next.circled = n>cur.circled.length?[...cur.circled,...Array(n-cur.circled.length).fill(false)]:cur.circled.slice(0,n)
     }
     // Auto-calc money from tasks
@@ -1137,7 +1137,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                           {/* C/H — click to toggle */}
                           <td onClick={()=>{setCell(s,sub,dateStr,plan,sd,{dayType:e.dayType==="C"?"H":"C"});setTimeout(()=>saveRow(s,sub,dateStr,plan,{...sd,...(rowEdits[editKey]||{}),dayType:e.dayType==="C"?"H":"C"}),50)}}
                             style={{padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0",cursor:"pointer"}}>
-                            {(hasAnything||isClassDay)&&<span style={{fontSize:9,fontWeight:800,
+                            {hasAnything&&<span style={{fontSize:9,fontWeight:800,
                               color:e.dayType==="C"?color:"#64748b",
                               background:e.dayType==="C"?color+"18":"#f1f5f9",
                               borderRadius:4,padding:"1px 5px"}}>{e.dayType||( isClassDay?"C":"H")}</span>}
@@ -1192,7 +1192,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                                 {hasDone?(
                                   activeCell(field)?(
                                     <input type="number" inputMode="numeric" value={sc??100} autoFocus
-                                      onChange={ev=>{const n=[...e.scores];n[i]=Math.max(0,Math.min(100,parseInt(ev.target.value)||0));setCell(s,sub,dateStr,plan,sd,{scores:n})}}
+                                      onChange={ev=>{const n=[...e.scores];n[i]=ev.target.value===""?null:Math.max(0,Math.min(100,parseInt(ev.target.value)||0));setCell(s,sub,dateStr,plan,sd,{scores:n})}}
                                       onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
                                       onKeyDown={ev=>{
                                         if(ev.key==="Tab"){ev.preventDefault();
@@ -1203,15 +1203,25 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                                       }}
                                       style={{width:22,border:"none",outline:"none",background:"transparent",fontSize:10,fontWeight:800,textAlign:"center"}}/>
                                   ):(
-                                    <span onDoubleClick={()=>{const c=[...e.circled];c[i]=!c[i];setCell(s,sub,dateStr,plan,sd,{circled:c});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),50)}}
-                                      style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,cursor:"pointer",
-                                        border:isC?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
+                                    <div style={{display:"inline-flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                                    <div onClick={()=>{const c=[...e.circled];c[i]=!c[i];setCell(s,sub,dateStr,plan,sd,{circled:c});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),50)}}
+                                      style={{fontSize:7,fontWeight:800,padding:"1px 3px",borderRadius:"3px 3px 0 0",cursor:"pointer",
+                                        background:isC?"#16a34a":"#94a3b8",color:"white",minWidth:20,textAlign:"center"}}
+                                      title="Click to circle/uncircle corrections">
+                                      {isC?"⭕":"○"}
+                                    </div>
+                                    <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:18,
+                                        border:isC?"2px solid #16a34a":"1.5px solid #e2e8f0",
+                                        borderTop:"none",borderRadius:"0 0 4px 4px",
                                         background:isC?"#dcfce7":sc!=null&&sc<100?"#fef9c3":"white",
-                                        color:isC?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151"}}
-                                      title="Double-click to circle corrections">{sc!=null?sc:100}</span>
+                                        color:isC?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151",
+                                        fontSize:10,fontWeight:800}}>
+                                      {sc!=null?sc:""}
+                                    </div>
+                                  </div>
                                   )
                                 ):i<(plan?.ws_count||0)?(
-                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:8,border:"1.5px dashed #cbd5e1",color:"#94a3b8"}}>{wsItem?wsItem.wsNum:""}</span>
+                                  <span style={{color:"#cbd5e1",fontSize:10,fontWeight:700}}>—</span>
                                 ):null}
                               </td>
                             )
