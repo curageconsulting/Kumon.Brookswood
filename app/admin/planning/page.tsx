@@ -5,7 +5,7 @@
 // the Student-planning app. Lives at /admin/planning.
 // Reads/writes the kumon_* tables in the same Supabase project.
 // ============================================================
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 const supabase = createClient()
