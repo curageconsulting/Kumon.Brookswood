@@ -929,182 +929,82 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 
 
 // ─── Day Plan Modal — edit/set plan for a specific date from record view ──
-function DayPlanModal({student,dateStr,subject,existingPlan,existingSession,plans,onSave,onDelete,onClose}:any) {
-  const isMath = subject==="math"
-  const color = isMath?"#3b82f6":"#ec4899"
-  const seq = levelsFor(subject)
-  const curLevel = isMath?student.mathLevel:student.readingLevel
-  const curWs = isMath?student.mathWorksheet:student.readingWorksheet
-  const lastPlanBefore = () => {
-    const prior = Object.values(plans)
-      .filter((p:any)=>p.student_id===student.id&&p.subject===subject&&p.plan_date<dateStr)
-      .sort((a:any,b:any)=>a.plan_date<b.plan_date?1:-1)[0] as any
-    if (prior) { const nxt = advancePos(prior.level,prior.start_ws,prior.ws_count,subject); return {level:nxt.level,ws:nxt.worksheet}; }
-    return {level:curLevel,ws:curWs}
-  }
-  const def = existingPlan
-    ? {level:existingPlan.level,ws:existingPlan.start_ws,count:existingPlan.ws_count,note:existingPlan.note||"",dayType:existingPlan.day_type||"H"}
-    : {...lastPlanBefore(),count:isMath?(student.mathClassWS||5):(student.readingClassWS||5),note:"",dayType:"H"}
-  const [level,setLevel] = useState(def.level)
-  const [ws,setWs] = useState(def.ws)
-  const [count,setCount] = useState(def.count)
-  const [note,setNote] = useState(def.note)
-  const [dayType,setDayType] = useState(def.dayType) // "C" or "H"
-  // Scores state — init from existing session if present
-  const initScores = existingSession?.scores||Array(def.count).fill(100)
-  const initCircled = existingSession?.circled||Array(def.count).fill(false)
-  const initTime = existingSession?.timeMinutes||""
-  const [scores,setScores] = useState(initScores)
-  const [circled,setCircled] = useState(initCircled)
-  const [timeMin,setTimeMin] = useState(initTime)
-  const [showScores,setShowScores] = useState(!!(existingSession?.done))
-  const fmt = new Date(dateStr+"T12:00:00").toLocaleDateString("en-CA",{weekday:"long",month:"short",day:"numeric"})
-  const endWs = Math.min(200,ws+count-1)
-  // Keep scores array in sync with count changes
-  const adjCount = (n:number) => {
-    setCount(n)
-    setScores((prev:number[]) => n>prev.length?[...prev,...Array(n-prev.length).fill(100)]:prev.slice(0,n))
-    setCircled((prev:boolean[]) => n>prev.length?[...prev,...Array(n-prev.length).fill(false)]:prev.slice(0,n))
-  }
-  const wsItems = getWsItems(level,ws,count,subject)
-  const toggleCircle = (i:number) => setCircled((prev:boolean[])=>{ const n=[...prev]; n[i]=!n[i]; return n; })
-  const setScore = (i:number,v:number) => setScores((prev:number[])=>{ const n=[...prev]; n[i]=v; return n; })
-  const allCircled = circled.slice(0,count).every(Boolean)
-  return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px",maxHeight:"92vh",overflowY:"auto"}}>
-        <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
-          <div>
-            <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>📅 {existingPlan?"Edit":"Set"} Plan</div>
-            <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{student.name} · {isMath?"📐 Math":"📖 Reading"} · {fmt}</div>
-          </div>
-          <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:32,height:32,cursor:"pointer",fontSize:14}}>✕</button>
-        </div>
-
-        {/* C/H toggle */}
-        <div style={{display:"flex",gap:8,marginBottom:12}}>
-          {["C","H"].map(t=>(
-            <button key={t} onClick={()=>setDayType(t)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontWeight:800,fontSize:14,cursor:"pointer",
-              background:dayType===t?(t==="C"?color:"#64748b"):"#f1f5f9",
-              color:dayType===t?"white":"#64748b"}}>
-              {t==="C"?"🏫 Class Day":"🏠 Homework Day"}
-            </button>
-          ))}
-        </div>
-
-        {/* Level + WS */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-          <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>LEVEL</div>
-            <select value={level} onChange={e=>setLevel(e.target.value)} style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color,outline:"none"}}>
-              {seq.map((l:string)=><option key={l}>{l}</option>)}
-            </select>
-          </div>
-          <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
-            <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>START WS</div>
-            <input type="number" inputMode="numeric" min={1} max={200} value={ws}
-              onChange={e=>setWs(Math.max(1,Math.min(200,parseInt(e.target.value)||1)))}
-              style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none"}}/>
-          </div>
-        </div>
-
-        {/* Count */}
-        <div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
-          <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:8}}>WORKSHEETS</div>
-          <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <CounterBtn size={28} onClick={()=>adjCount(Math.max(1,count-1))}>−</CounterBtn>
-            <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:24,color:"#1e293b"}}>{count}</span>
-            <CounterBtn size={28} onClick={()=>adjCount(Math.min(20,count+1))}>+</CounterBtn>
-          </div>
-          <div style={{textAlign:"center",fontSize:12,color,fontWeight:700,marginTop:6}}>{level}{ws} → {level}{endWs}</div>
-        </div>
-
-        {/* Scores section */}
-        <button onClick={()=>setShowScores(!showScores)} style={{width:"100%",marginBottom:10,padding:"8px",border:`1.5px solid ${showScores?color:"#e2e8f0"}`,background:showScores?color+"0a":"white",color:showScores?color:"#64748b",borderRadius:10,fontWeight:700,fontSize:12,cursor:"pointer"}}>
-          {showScores?"▲ Hide Scores":"▼ Add Scores & Corrections"}
-        </button>
-        {showScores&&(
-          <div style={{marginBottom:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              <span style={{fontSize:10,fontWeight:700,color:"#475569"}}>TIME (min)</span>
-              <input type="number" inputMode="numeric" value={timeMin} onChange={e=>setTimeMin(e.target.value.replace(/[^0-9]/g,""))}
-                placeholder="0" style={{width:60,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"5px 8px",fontSize:13,fontWeight:700,outline:"none"}}/>
-              <span style={{fontSize:10,color:"#94a3b8",marginLeft:"auto"}}>Tap score to cycle · Tap WS# to circle corrections</span>
-            </div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {wsItems.map((item:any,i:number)=>(
-                <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
-                  <button onClick={()=>toggleCircle(i)} style={{fontSize:9,fontWeight:800,padding:"2px 6px",border:"none",borderRadius:"5px 5px 0 0",cursor:"pointer",
-                    background:circled[i]?"#16a34a":color,color:"white",width:36}}>
-                    {circled[i]?"⭕":""}{item.level}{item.wsNum}
-                  </button>
-                  <button onClick={()=>setScore(i,cycleScore(scores[i]??100))} style={{
-                    width:36,height:30,border:`1.5px solid ${circled[i]?"#16a34a":scores[i]<100?"#fde68a":"#e2e8f0"}`,
-                    borderTop:"none",borderRadius:"0 0 5px 5px",cursor:"pointer",fontWeight:800,fontSize:13,
-                    background:circled[i]?"#f0fdf4":scores[i]<100?"#fffbeb":"white",
-                    color:circled[i]?"#16a34a":scores[i]<100?"#d97706":"#1e293b"}}>
-                    {scores[i]??100}
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div style={{display:"flex",gap:6,marginTop:8}}>
-              <button onClick={()=>setScores(Array(count).fill(100))} style={{fontSize:10,fontWeight:700,border:"none",background:"#f1f5f9",color:"#64748b",borderRadius:7,padding:"4px 10px",cursor:"pointer"}}>All 100</button>
-              <button onClick={()=>setCircled(Array(count).fill(true))} style={{fontSize:10,fontWeight:700,border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:7,padding:"4px 10px",cursor:"pointer"}}>⭕ Circle All</button>
-            </div>
-            {allCircled&&<div style={{marginTop:8,fontSize:11,fontWeight:700,color:"#16a34a",background:"#f0fdf4",borderRadius:8,padding:"6px 10px"}}>✅ All corrections done — same-day correction bonus applies!</div>}
-          </div>
-        )}
-
-        <input value={note} onChange={e=>setNote(e.target.value)}
-          placeholder="Note — e.g. missed class, carry-forward from Mon"
-          style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:12,boxSizing:"border-box" as any,outline:"none",marginBottom:12}}/>
-        <div style={{display:"flex",gap:8}}>
-          {existingPlan&&<button onClick={()=>onDelete(existingPlan)} style={{padding:"12px 14px",border:"1.5px solid #fca5a5",background:"#fef2f2",color:"#dc2626",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>🗑</button>}
-          <button onClick={onClose} style={{padding:"12px 14px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(
-            {id:`p_${student.id}_${subject}_${dateStr}`,student_id:student.id,subject,plan_date:dateStr,level,start_ws:ws,ws_count:count,note:note||null,day_type:dayType},
-            showScores?{done:count,scores,circled,timeMinutes:timeMin,fromLevel:level,fromWorksheet:ws}:null
-          )} style={{flex:1,padding:"12px",border:"none",background:`linear-gradient(135deg,${color},${color}bb)`,color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>
-            💾 Save
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Record Book View — paper record sheet style ────────────────
-// Layout mirrors the Kumon record book exactly:
-// Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
-// Score boxes map to individual worksheets done that day.
-// Circle = corrections verified for that worksheet.
 function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession}:any) {
   const todayRef = new Date()
-  const [dayPlanModal,setDayPlanModal] = useState<any>(null)
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
+  const [editRow,setEditRow] = useState<any>(null) // {studentId,sub,dateStr}
+  const [editState,setEditState] = useState<any>({})
+  const [saving,setSaving] = useState(false)
+
   const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate()
   const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString("en-CA",{month:"long",year:"numeric"})
-  const MAX_SCORE_COLS = 10
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
   const monthStr = `${viewYear}-${String(viewMonth+1).padStart(2,"0")}`
-  const shiftMonth = (n) => {
+
+  const shiftMonth = (n:number) => {
     const d = new Date(viewYear, viewMonth+n, 1)
     setViewYear(d.getFullYear()); setViewMonth(d.getMonth())
+    setEditRow(null)
     onMonthChange && onMonthChange(d.getFullYear(), d.getMonth())
   }
-  const active = students.filter(s=>s.status!=="inactive")
+
+  const openEdit = (s:any, sub:string, dateStr:string, plan:any, sd:any) => {
+    if (editRow?.studentId===s.id&&editRow?.sub===sub&&editRow?.dateStr===dateStr) {
+      setEditRow(null); return
+    }
+    const level = sd?.fromLevel||plan?.level||(sub==="math"?s.mathLevel:s.readingLevel)
+    const startWs = sd?.fromWorksheet||plan?.start_ws||(sub==="math"?s.mathWorksheet:s.readingWorksheet)
+    const count = plan?.ws_count||(sub==="math"?s.mathClassWS:s.readingClassWS)||5
+    const scores = sd?.scores||Array(count).fill(100)
+    const circled = sd?.circled||Array(count).fill(false)
+    const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(DAY_NAMES[new Date(dateStr+"T12:00:00").getDay()])
+    setEditRow({studentId:s.id,sub,dateStr})
+    setEditState({level,startWs,count,scores,circled,timeMin:sd?.timeMinutes||"",dayType:plan?.day_type||(isClassDay?"C":"H"),note:plan?.note||""})
+  }
+
+  const adjCount = (n:number) => {
+    setEditState((p:any)=>({...p,count:n,
+      scores:n>p.scores.length?[...p.scores,...Array(n-p.scores.length).fill(100)]:p.scores.slice(0,n),
+      circled:n>p.circled.length?[...p.circled,...Array(n-p.circled.length).fill(false)]:p.circled.slice(0,n)
+    }))
+  }
+
+  const saveRow = async (s:any) => {
+    setSaving(true)
+    const {level,startWs,count,scores,circled,timeMin,dayType,note} = editState
+    try {
+      const plan = {id:`p_${s.id}_${editRow.sub}_${editRow.dateStr}`,student_id:s.id,subject:editRow.sub,
+        plan_date:editRow.dateStr,level,start_ws:startWs,ws_count:count,note:note||null,day_type:dayType}
+      await onSavePlan([plan])
+      const sessData = {done:count,scores,circled,timeMinutes:timeMin,fromLevel:level,fromWorksheet:startWs}
+      await onSaveSession(s.id, editRow.dateStr, editRow.sub, sessData)
+      setEditRow(null)
+    } catch(e:any){ console.error(e) }
+    setSaving(false)
+  }
+
+  const deleteRow = async (s:any, plan:any) => {
+    if (!plan) return
+    await onDeletePlan(plan)
+    setEditRow(null)
+  }
+
+  const active = students.filter((s:any)=>s.status!=="inactive")
   if (!active.length) return <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>No students</div>
+
+  const MAX_SC = 10
+
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
+      {/* Month nav */}
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"white",borderRadius:12,padding:"10px 16px",boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
         <button onClick={()=>shiftMonth(-1)} style={{border:"none",background:"#f1f5f9",borderRadius:8,padding:"6px 14px",fontWeight:800,fontSize:16,cursor:"pointer",color:"#475569"}}>‹</button>
         <span style={{fontWeight:800,fontSize:15,color:"#1e293b"}}>{monthLabel}</span>
         <button onClick={()=>shiftMonth(1)} style={{border:"none",background:"#f1f5f9",borderRadius:8,padding:"6px 14px",fontWeight:800,fontSize:16,cursor:"pointer",color:"#475569"}}>›</button>
       </div>
-      {active.map(s=>(
+
+      {active.map((s:any)=>(
         <div key={s.id} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden"}}>
           <div style={{background:"#1e3a8a",color:"white",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <span style={{fontWeight:800,fontSize:14}}>{s.name}</span>
@@ -1112,15 +1012,19 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
           </div>
           {[s.mathEnabled&&{sub:"math",label:"Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet},
             s.readingEnabled&&{sub:"reading",label:"Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet}]
-            .filter(Boolean).map(({sub,label,color,level,ws})=>(
+            .filter(Boolean).map(({sub,label,color,level,ws}:any)=>(
             <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
               <div style={{fontSize:10,fontWeight:800,color,padding:"3px 12px",background:color+"0a"}}>{label.toUpperCase()}</div>
               <div style={{overflowX:"auto"}}>
-                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:400}}>
+                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:500}}>
                   <thead>
                     <tr style={{background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0"}}>
-                      {["Date","Day","C/H","Level","No.","Time",...Array.from({length:MAX_SCORE_COLS},(_,i)=>i+1)].map((h,i)=>(
-                        <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#475569",fontWeight:700,borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap",minWidth:i<6?26:22,fontSize:i>=6?10:11}}>{h}</th>
+                      {["Date","Day","C/H","Level","No.","Time","AT",...Array.from({length:MAX_SC},(_,i)=>i+1),""].map((h,i)=>(
+                        <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#475569",fontWeight:700,
+                          borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap",
+                          minWidth:i===0?26:i<7?24:i===MAX_SC+7?28:20,
+                          fontSize:i>=7&&i<MAX_SC+7?10:11,
+                          title:h==="AT"?"Achievement Test":undefined}}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -1133,10 +1037,10 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                       const plan = plans[planKey(s.id,sub,dateStr)]
                       const isToday = dateStr===selectedDate
                       const rawSess = isToday ? getSession(s.id) : monthSessions[s.id+"|"+dateStr]
-                      const sd = rawSess ? (sub==="math"?rawSess.math:rawSess.reading) : null
+                      const sd:any = rawSess ? (sub==="math"?rawSess.math:rawSess.reading) : null
                       const done = sd?.done||0
-                      const scores = sd?.scores||[]
-                      const circled = sd?.circled||[]
+                      const scores:number[] = sd?.scores||[]
+                      const circled:boolean[] = sd?.circled||[]
                       const fromLevel = sd?.fromLevel||plan?.level||level
                       const fromWs = sd?.fromWorksheet||plan?.start_ws||ws
                       const plannedCount = plan?.ws_count||0
@@ -1147,28 +1051,34 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                       const hasAnything = done>0||plannedCount>0
                       const allCircled = done>0&&circled.filter(Boolean).length===done
                       const isFuture = dateStr>selectedDate
-                      const rowBg = !hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
+                      const isAT = plan?.note?.toLowerCase().includes("achievement test")||plan?.is_at
+                      const isEditing = editRow?.studentId===s.id&&editRow?.sub===sub&&editRow?.dateStr===dateStr
+                      const rowBg = isEditing?"#eff6ff":!hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
+
                       return (
-                        <tr key={dayNum}
-                          onClick={()=>setDayPlanModal({student:s,dateStr,subject:sub,existingPlan:plan||null,existingSession:(isToday?getSession(s.id):monthSessions[s.id+"|"+dateStr])?.(sub==="math"?"math":"reading")||null})}
-                          style={{borderBottom:"1px solid #f1f5f9",cursor:"pointer",
+                        <React.Fragment key={dayNum}>
+                        {/* ── Normal row ── */}
+                        <tr onClick={()=>openEdit(s,sub,dateStr,plan,sd)}
+                          style={{borderBottom:isEditing?"none":"1px solid #f1f5f9",cursor:"pointer",
                             background:rowBg,opacity:isFuture&&!hasAnything?0.4:1,
                             outline:isToday?"2px solid "+color:"none",outlineOffset:"-1px"}}>
                           <td style={{padding:"4px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0"}}>{dayNum}</td>
                           <td style={{padding:"4px 3px",textAlign:"center",color:"#94a3b8",fontSize:9,borderRight:"1px solid #e2e8f0"}}>{dayLabel}</td>
                           <td style={{padding:"4px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
-                            {isClassDay?<span style={{fontSize:9,fontWeight:800,color,background:color+"18",borderRadius:4,padding:"1px 4px"}}>C</span>
-                              :hasAnything?<span style={{fontSize:9,color:"#64748b",background:"#f1f5f9",borderRadius:4,padding:"1px 4px",fontWeight:700}}>H</span>:null}
+                            {(plan?.day_type||isClassDay)?
+                              <span style={{fontSize:9,fontWeight:800,color:plan?.day_type==="C"||isClassDay?color:"#64748b",background:(plan?.day_type==="C"||isClassDay)?color+"18":"#f1f5f9",borderRadius:4,padding:"1px 5px"}}>{plan?.day_type||( isClassDay?"C":"H")}</span>
+                              :hasAnything?<span style={{fontSize:9,color:"#64748b",background:"#f1f5f9",borderRadius:4,padding:"1px 5px",fontWeight:700}}>H</span>:null}
                           </td>
                           <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?color:plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromLevel:""}</td>
                           <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?"#1e293b":plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromWs:""}</td>
                           <td style={{padding:"4px 3px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0"}}>{timePerWS?`${timePerWS}m`:""}</td>
-                          {Array.from({length:MAX_SCORE_COLS},(_,i)=>{
-                            const sc = scores[i], isCircled = circled[i]
-                            const hasDone = i<done, isPlanned = !hasDone&&i<plannedCount
-                            const wsItem = wsItems[i]
+                          <td style={{padding:"4px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            {isAT&&<span style={{fontSize:9,fontWeight:800,color:"#7c3aed",background:"#f5f3ff",borderRadius:4,padding:"1px 4px"}}>AT</span>}
+                          </td>
+                          {Array.from({length:MAX_SC},(_,i)=>{
+                            const sc=scores[i],isCircled=circled[i],hasDone=i<done,isPlanned=!hasDone&&i<plannedCount,wsItem=wsItems[i]
                             return (
-                              <td key={i} style={{padding:"2px 1px",textAlign:"center",borderRight:i<MAX_SCORE_COLS-1?"1px solid #f1f5f9":"none"}}>
+                              <td key={i} style={{padding:"2px 1px",textAlign:"center",borderRight:i<MAX_SC-1?"1px solid #f1f5f9":"none"}}>
                                 {hasDone?(
                                   <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,
                                     border:isCircled?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
@@ -1180,16 +1090,129 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                               </td>
                             )
                           })}
+                          <td style={{padding:"2px 4px",textAlign:"center"}}>
+                            <span style={{color:isEditing?color:"#cbd5e1",fontSize:12}}>{isEditing?"▲":"✎"}</span>
+                          </td>
                         </tr>
+
+                        {/* ── Inline edit row ── */}
+                        {isEditing&&(
+                          <tr style={{background:"#eff6ff",borderBottom:"2px solid "+color}}>
+                            <td colSpan={MAX_SC+8} style={{padding:"10px 12px"}}>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-start"}}>
+
+                                {/* C/H */}
+                                <div style={{display:"flex",gap:4}}>
+                                  {["C","H"].map(t=>(
+                                    <button key={t} onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,dayType:t}))}}
+                                      style={{padding:"4px 10px",border:"none",borderRadius:7,fontWeight:800,fontSize:11,cursor:"pointer",
+                                        background:editState.dayType===t?(t==="C"?color:"#64748b"):"#e2e8f0",
+                                        color:editState.dayType===t?"white":"#64748b"}}>
+                                      {t==="C"?"🏫 C":"🏠 H"}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {/* Level */}
+                                <select value={editState.level} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,level:e.target.value}))}}
+                                  style={{border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,color,background:"white",outline:"none"}}>
+                                  {levelsFor(sub).map((l:string)=><option key={l}>{l}</option>)}
+                                </select>
+
+                                {/* Start WS */}
+                                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>WS</span>
+                                  <input type="number" inputMode="numeric" min={1} max={200} value={editState.startWs}
+                                    onClick={e=>e.stopPropagation()}
+                                    onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,startWs:Math.max(1,Math.min(200,parseInt(e.target.value)||1))}))}}
+                                    style={{width:50,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,outline:"none",textAlign:"center"}}/>
+                                </div>
+
+                                {/* Count */}
+                                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <button onClick={e=>{e.stopPropagation();adjCount(Math.max(1,editState.count-1))}} style={{width:24,height:24,border:"1.5px solid #bfdbfe",borderRadius:6,background:"white",cursor:"pointer",fontWeight:800}}>−</button>
+                                  <span style={{fontWeight:800,fontSize:14,minWidth:20,textAlign:"center"}}>{editState.count}</span>
+                                  <button onClick={e=>{e.stopPropagation();adjCount(Math.min(20,editState.count+1))}} style={{width:24,height:24,border:"1.5px solid #bfdbfe",borderRadius:6,background:"white",cursor:"pointer",fontWeight:800}}>+</button>
+                                  <span style={{fontSize:10,color,fontWeight:700}}>{editState.level}{editState.startWs}→{Math.min(200,editState.startWs+editState.count-1)}</span>
+                                </div>
+
+                                {/* Time */}
+                                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>⏱</span>
+                                  <input type="number" inputMode="numeric" value={editState.timeMin} placeholder="min"
+                                    onClick={e=>e.stopPropagation()}
+                                    onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,timeMin:e.target.value.replace(/[^0-9]/g,"")}))}}
+                                    style={{width:44,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,outline:"none",textAlign:"center"}}/>
+                                </div>
+
+                                {/* AT checkbox */}
+                                <label onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:11,fontWeight:700,color:"#7c3aed"}}>
+                                  <input type="checkbox" checked={editState.note?.toLowerCase().includes("achievement test")||false}
+                                    onChange={e=>setEditState((p:any)=>({...p,note:e.target.checked?"Achievement Test":""}))}
+                                    style={{accentColor:"#7c3aed"}}/>
+                                  AT
+                                </label>
+
+                                {/* Note */}
+                                <input value={editState.note||""} placeholder="Note" onClick={e=>e.stopPropagation()}
+                                  onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,note:e.target.value}))}}
+                                  style={{flex:1,minWidth:80,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 8px",fontSize:11,outline:"none"}}/>
+                              </div>
+
+                              {/* Score chips */}
+                              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
+                                <span style={{fontSize:10,color:"#64748b",fontWeight:700,marginRight:2}}>Scores:</span>
+                                {Array.from({length:editState.count},(_,i)=>{
+                                  const wsItem = getWsItems(editState.level,editState.startWs,editState.count,sub)[i]
+                                  const sc = editState.scores[i]??100
+                                  const isC = editState.circled[i]
+                                  return (
+                                    <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+                                      <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>{const c=[...p.circled];c[i]=!c[i];return{...p,circled:c}})}}
+                                        style={{fontSize:8,fontWeight:800,padding:"1px 4px",border:"none",borderRadius:"4px 4px 0 0",cursor:"pointer",
+                                          background:isC?"#16a34a":color,color:"white",minWidth:28}}>
+                                        {isC?"⭕":""}{wsItem?wsItem.wsNum:i+1}
+                                      </button>
+                                      <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>{const sc=[...p.scores];sc[i]=cycleScore(sc[i]??100);return{...p,scores:sc}})}}
+                                        style={{minWidth:28,height:22,border:`1.5px solid ${isC?"#16a34a":sc<100?"#fde68a":"#e2e8f0"}`,borderTop:"none",
+                                          borderRadius:"0 0 4px 4px",cursor:"pointer",fontWeight:800,fontSize:11,
+                                          background:isC?"#f0fdf4":sc<100?"#fffbeb":"white",
+                                          color:isC?"#16a34a":sc<100?"#d97706":"#1e293b"}}>
+                                        {sc}
+                                      </button>
+                                    </div>
+                                  )
+                                })}
+                                <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,scores:Array(p.count).fill(100)}))}}
+                                  style={{fontSize:9,fontWeight:700,border:"none",background:"#f1f5f9",color:"#64748b",borderRadius:6,padding:"3px 8px",cursor:"pointer",marginLeft:4}}>All 100</button>
+                                <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,circled:Array(p.count).fill(true)}))}}
+                                  style={{fontSize:9,fontWeight:700,border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>⭕ All</button>
+                              </div>
+
+                              {/* Action buttons */}
+                              <div style={{display:"flex",gap:6,marginTop:8}}>
+                                {plan&&<button onClick={e=>{e.stopPropagation();deleteRow(s,plan)}}
+                                  style={{padding:"6px 12px",border:"1.5px solid #fca5a5",background:"#fef2f2",color:"#dc2626",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>🗑 Remove</button>}
+                                <button onClick={e=>{e.stopPropagation();setEditRow(null)}}
+                                  style={{padding:"6px 12px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>Cancel</button>
+                                <button onClick={e=>{e.stopPropagation();saveRow(s)}} disabled={saving}
+                                  style={{flex:1,padding:"6px 12px",border:"none",background:color,color:"white",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>
+                                  {saving?"Saving…":"💾 Save"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        </React.Fragment>
                       )
                     })}
                   </tbody>
                   <tfoot>
                     <tr style={{background:"#f8fafc",borderTop:"1.5px solid #e2e8f0"}}>
-                      <td colSpan={6} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
-                        {Object.values(plans).filter((p:any)=>p.student_id===s.id&&p.subject===sub&&p.plan_date?.startsWith(monthStr)).length} planned days
+                      <td colSpan={7} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
+                        {Object.values(plans).filter((p:any)=>p.student_id===s.id&&p.subject===sub&&p.plan_date?.startsWith(monthStr)).length} planned days · click any row to edit
                       </td>
-                      <td colSpan={MAX_SCORE_COLS} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>Current: {level}{ws}</td>
+                      <td colSpan={MAX_SC+1} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>Current: {level}{ws}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -1198,21 +1221,6 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
           ))}
         </div>
       ))}
-      {dayPlanModal&&(
-        <DayPlanModal
-          student={dayPlanModal.student} dateStr={dayPlanModal.dateStr}
-          subject={dayPlanModal.subject} existingPlan={dayPlanModal.existingPlan}
-          existingSession={dayPlanModal.existingSession}
-          plans={plans}
-          onSave={async (row:any, sessData:any)=>{
-            await onSavePlan([row]);
-            if (sessData) await onSaveSession(dayPlanModal.student.id, dayPlanModal.dateStr, dayPlanModal.subject, sessData);
-            setDayPlanModal(null);
-          }}
-          onDelete={async (p:any)=>{ await onDeletePlan(p); setDayPlanModal(null); }}
-          onClose={()=>setDayPlanModal(null)}
-        />
-      )}
     </div>
   )
 }
