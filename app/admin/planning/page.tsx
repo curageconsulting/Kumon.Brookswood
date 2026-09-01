@@ -886,6 +886,13 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
         <RecordBookView students={allStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions}
           onSavePlan={async (rows:any[])=>{ await upsertPlans(rows); setPlans((prev:any)=>{ const n={...prev}; for(const r of rows) n[planKey(r.student_id,r.subject,r.plan_date)]=r; return n; }); showToast("📅 Plan saved!"); }}
           onDeletePlan={async (p:any)=>{ await deletePlan(p.id); setPlans((prev:any)=>{ const n={...prev}; delete n[planKey(p.student_id,p.subject,p.plan_date)]; return n; }); showToast("Plan removed"); }}
+          onSaveSession={async (studentId:string, dateStr:string, subject:string, sessData:any)=>{
+            const existing = monthSessions[studentId+"|"+dateStr]||{}
+            const updated = {...existing, [subject]:sessData, present:true}
+            await upsertSession(studentId, dateStr, updated)
+            setMonthSessions((prev:any)=>({...prev,[studentId+"|"+dateStr]:updated}))
+            showToast("✅ Scores saved!")
+          }}
           onMonthChange={async (y:number,m:number)=>{
             try {
               const from=`${y}-${String(m+1).padStart(2,"0")}-01`;
@@ -922,7 +929,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 
 
 // ─── Day Plan Modal — edit/set plan for a specific date from record view ──
-function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelete,onClose}:any) {
+function DayPlanModal({student,dateStr,subject,existingPlan,existingSession,plans,onSave,onDelete,onClose}:any) {
   const isMath = subject==="math"
   const color = isMath?"#3b82f6":"#ec4899"
   const seq = levelsFor(subject)
@@ -936,17 +943,36 @@ function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelet
     return {level:curLevel,ws:curWs}
   }
   const def = existingPlan
-    ? {level:existingPlan.level,ws:existingPlan.start_ws,count:existingPlan.ws_count,note:existingPlan.note||""}
-    : {...lastPlanBefore(),count:isMath?(student.mathClassWS||5):(student.readingClassWS||5),note:""}
+    ? {level:existingPlan.level,ws:existingPlan.start_ws,count:existingPlan.ws_count,note:existingPlan.note||"",dayType:existingPlan.day_type||"H"}
+    : {...lastPlanBefore(),count:isMath?(student.mathClassWS||5):(student.readingClassWS||5),note:"",dayType:"H"}
   const [level,setLevel] = useState(def.level)
   const [ws,setWs] = useState(def.ws)
   const [count,setCount] = useState(def.count)
   const [note,setNote] = useState(def.note)
+  const [dayType,setDayType] = useState(def.dayType) // "C" or "H"
+  // Scores state — init from existing session if present
+  const initScores = existingSession?.scores||Array(def.count).fill(100)
+  const initCircled = existingSession?.circled||Array(def.count).fill(false)
+  const initTime = existingSession?.timeMinutes||""
+  const [scores,setScores] = useState(initScores)
+  const [circled,setCircled] = useState(initCircled)
+  const [timeMin,setTimeMin] = useState(initTime)
+  const [showScores,setShowScores] = useState(!!(existingSession?.done))
   const fmt = new Date(dateStr+"T12:00:00").toLocaleDateString("en-CA",{weekday:"long",month:"short",day:"numeric"})
   const endWs = Math.min(200,ws+count-1)
+  // Keep scores array in sync with count changes
+  const adjCount = (n:number) => {
+    setCount(n)
+    setScores((prev:number[]) => n>prev.length?[...prev,...Array(n-prev.length).fill(100)]:prev.slice(0,n))
+    setCircled((prev:boolean[]) => n>prev.length?[...prev,...Array(n-prev.length).fill(false)]:prev.slice(0,n))
+  }
+  const wsItems = getWsItems(level,ws,count,subject)
+  const toggleCircle = (i:number) => setCircled((prev:boolean[])=>{ const n=[...prev]; n[i]=!n[i]; return n; })
+  const setScore = (i:number,v:number) => setScores((prev:number[])=>{ const n=[...prev]; n[i]=v; return n; })
+  const allCircled = circled.slice(0,count).every(Boolean)
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px"}}>
+      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px",maxHeight:"92vh",overflowY:"auto"}}>
         <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
           <div>
@@ -955,6 +981,19 @@ function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelet
           </div>
           <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:32,height:32,cursor:"pointer",fontSize:14}}>✕</button>
         </div>
+
+        {/* C/H toggle */}
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {["C","H"].map(t=>(
+            <button key={t} onClick={()=>setDayType(t)} style={{flex:1,padding:"10px",border:"none",borderRadius:10,fontWeight:800,fontSize:14,cursor:"pointer",
+              background:dayType===t?(t==="C"?color:"#64748b"):"#f1f5f9",
+              color:dayType===t?"white":"#64748b"}}>
+              {t==="C"?"🏫 Class Day":"🏠 Homework Day"}
+            </button>
+          ))}
+        </div>
+
+        {/* Level + WS */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
           <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
             <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>LEVEL</div>
@@ -969,24 +1008,66 @@ function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelet
               style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none"}}/>
           </div>
         </div>
+
+        {/* Count */}
         <div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
           <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:8}}>WORKSHEETS</div>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
-            <CounterBtn size={28} onClick={()=>setCount(Math.max(1,count-1))}>−</CounterBtn>
+            <CounterBtn size={28} onClick={()=>adjCount(Math.max(1,count-1))}>−</CounterBtn>
             <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:24,color:"#1e293b"}}>{count}</span>
-            <CounterBtn size={28} onClick={()=>setCount(Math.min(20,count+1))}>+</CounterBtn>
+            <CounterBtn size={28} onClick={()=>adjCount(Math.min(20,count+1))}>+</CounterBtn>
           </div>
           <div style={{textAlign:"center",fontSize:12,color,fontWeight:700,marginTop:6}}>{level}{ws} → {level}{endWs}</div>
         </div>
+
+        {/* Scores section */}
+        <button onClick={()=>setShowScores(!showScores)} style={{width:"100%",marginBottom:10,padding:"8px",border:`1.5px solid ${showScores?color:"#e2e8f0"}`,background:showScores?color+"0a":"white",color:showScores?color:"#64748b",borderRadius:10,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+          {showScores?"▲ Hide Scores":"▼ Add Scores & Corrections"}
+        </button>
+        {showScores&&(
+          <div style={{marginBottom:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <span style={{fontSize:10,fontWeight:700,color:"#475569"}}>TIME (min)</span>
+              <input type="number" inputMode="numeric" value={timeMin} onChange={e=>setTimeMin(e.target.value.replace(/[^0-9]/g,""))}
+                placeholder="0" style={{width:60,border:"1.5px solid #e2e8f0",borderRadius:8,padding:"5px 8px",fontSize:13,fontWeight:700,outline:"none"}}/>
+              <span style={{fontSize:10,color:"#94a3b8",marginLeft:"auto"}}>Tap score to cycle · Tap WS# to circle corrections</span>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {wsItems.map((item:any,i:number)=>(
+                <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <button onClick={()=>toggleCircle(i)} style={{fontSize:9,fontWeight:800,padding:"2px 6px",border:"none",borderRadius:"5px 5px 0 0",cursor:"pointer",
+                    background:circled[i]?"#16a34a":color,color:"white",width:36}}>
+                    {circled[i]?"⭕":""}{item.level}{item.wsNum}
+                  </button>
+                  <button onClick={()=>setScore(i,cycleScore(scores[i]??100))} style={{
+                    width:36,height:30,border:`1.5px solid ${circled[i]?"#16a34a":scores[i]<100?"#fde68a":"#e2e8f0"}`,
+                    borderTop:"none",borderRadius:"0 0 5px 5px",cursor:"pointer",fontWeight:800,fontSize:13,
+                    background:circled[i]?"#f0fdf4":scores[i]<100?"#fffbeb":"white",
+                    color:circled[i]?"#16a34a":scores[i]<100?"#d97706":"#1e293b"}}>
+                    {scores[i]??100}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:6,marginTop:8}}>
+              <button onClick={()=>setScores(Array(count).fill(100))} style={{fontSize:10,fontWeight:700,border:"none",background:"#f1f5f9",color:"#64748b",borderRadius:7,padding:"4px 10px",cursor:"pointer"}}>All 100</button>
+              <button onClick={()=>setCircled(Array(count).fill(true))} style={{fontSize:10,fontWeight:700,border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:7,padding:"4px 10px",cursor:"pointer"}}>⭕ Circle All</button>
+            </div>
+            {allCircled&&<div style={{marginTop:8,fontSize:11,fontWeight:700,color:"#16a34a",background:"#f0fdf4",borderRadius:8,padding:"6px 10px"}}>✅ All corrections done — same-day correction bonus applies!</div>}
+          </div>
+        )}
+
         <input value={note} onChange={e=>setNote(e.target.value)}
           placeholder="Note — e.g. missed class, carry-forward from Mon"
           style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:12,boxSizing:"border-box" as any,outline:"none",marginBottom:12}}/>
         <div style={{display:"flex",gap:8}}>
           {existingPlan&&<button onClick={()=>onDelete(existingPlan)} style={{padding:"12px 14px",border:"1.5px solid #fca5a5",background:"#fef2f2",color:"#dc2626",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>🗑</button>}
           <button onClick={onClose} style={{padding:"12px 14px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave({id:`p_${student.id}_${subject}_${dateStr}`,student_id:student.id,subject,plan_date:dateStr,level,start_ws:ws,ws_count:count,note:note||null})}
-            style={{flex:1,padding:"12px",border:"none",background:`linear-gradient(135deg,${color},${color}bb)`,color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>
-            💾 Save Plan
+          <button onClick={()=>onSave(
+            {id:`p_${student.id}_${subject}_${dateStr}`,student_id:student.id,subject,plan_date:dateStr,level,start_ws:ws,ws_count:count,note:note||null,day_type:dayType},
+            showScores?{done:count,scores,circled,timeMinutes:timeMin,fromLevel:level,fromWorksheet:ws}:null
+          )} style={{flex:1,padding:"12px",border:"none",background:`linear-gradient(135deg,${color},${color}bb)`,color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>
+            💾 Save
           </button>
         </div>
       </div>
@@ -999,7 +1080,7 @@ function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelet
 // Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
 // Score boxes map to individual worksheets done that day.
 // Circle = corrections verified for that worksheet.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan}:any) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession}:any) {
   const todayRef = new Date()
   const [dayPlanModal,setDayPlanModal] = useState<any>(null)
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
@@ -1069,7 +1150,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                       const rowBg = !hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
                       return (
                         <tr key={dayNum}
-                          onClick={()=>setDayPlanModal({student:s,dateStr,subject:sub,existingPlan:plan||null})}
+                          onClick={()=>setDayPlanModal({student:s,dateStr,subject:sub,existingPlan:plan||null,existingSession:(isToday?getSession(s.id):monthSessions[s.id+"|"+dateStr])?.(sub==="math"?"math":"reading")||null})}
                           style={{borderBottom:"1px solid #f1f5f9",cursor:"pointer",
                             background:rowBg,opacity:isFuture&&!hasAnything?0.4:1,
                             outline:isToday?"2px solid "+color:"none",outlineOffset:"-1px"}}>
@@ -1121,8 +1202,13 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
         <DayPlanModal
           student={dayPlanModal.student} dateStr={dayPlanModal.dateStr}
           subject={dayPlanModal.subject} existingPlan={dayPlanModal.existingPlan}
+          existingSession={dayPlanModal.existingSession}
           plans={plans}
-          onSave={async (row:any)=>{ await onSavePlan([row]); setDayPlanModal(null); }}
+          onSave={async (row:any, sessData:any)=>{
+            await onSavePlan([row]);
+            if (sessData) await onSaveSession(dayPlanModal.student.id, dayPlanModal.dateStr, dayPlanModal.subject, sessData);
+            setDayPlanModal(null);
+          }}
           onDelete={async (p:any)=>{ await onDeletePlan(p); setDayPlanModal(null); }}
           onClose={()=>setDayPlanModal(null)}
         />
