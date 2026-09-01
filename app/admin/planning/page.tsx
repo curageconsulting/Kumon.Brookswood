@@ -809,7 +809,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={},setMonthSessions}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},setPlans,kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={},setMonthSessions,showToast}:any) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table" | "record"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -882,7 +882,9 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
         <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
       ) : viewMode==="record" ? (
         <RecordBookView students={allStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions}
-          onMonthChange={async (y,m)=>{
+          onSavePlan={async (rows:any[])=>{ await upsertPlans(rows); setPlans((prev:any)=>{ const n={...prev}; for(const r of rows) n[planKey(r.student_id,r.subject,r.plan_date)]=r; return n; }); showToast("📅 Plan saved!"); }}
+          onDeletePlan={async (p:any)=>{ await deletePlan(p.id); setPlans((prev:any)=>{ const n={...prev}; delete n[planKey(p.student_id,p.subject,p.plan_date)]; return n; }); showToast("Plan removed"); }}
+          onMonthChange={async (y:number,m:number)=>{
             try {
               const from=`${y}-${String(m+1).padStart(2,"0")}-01`;
               const last=new Date(y,m+1,0).getDate();
@@ -916,13 +918,88 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 }
 
 
+
+// ─── Day Plan Modal — edit/set plan for a specific date from record view ──
+function DayPlanModal({student,dateStr,subject,existingPlan,plans,onSave,onDelete,onClose}:any) {
+  const isMath = subject==="math"
+  const color = isMath?"#3b82f6":"#ec4899"
+  const seq = levelsFor(subject)
+  const curLevel = isMath?student.mathLevel:student.readingLevel
+  const curWs = isMath?student.mathWorksheet:student.readingWorksheet
+  const lastPlanBefore = () => {
+    const prior = Object.values(plans)
+      .filter((p:any)=>p.student_id===student.id&&p.subject===subject&&p.plan_date<dateStr)
+      .sort((a:any,b:any)=>a.plan_date<b.plan_date?1:-1)[0] as any
+    if (prior) { const nxt = advancePos(prior.level,prior.start_ws,prior.ws_count,subject); return {level:nxt.level,ws:nxt.worksheet}; }
+    return {level:curLevel,ws:curWs}
+  }
+  const def = existingPlan
+    ? {level:existingPlan.level,ws:existingPlan.start_ws,count:existingPlan.ws_count,note:existingPlan.note||""}
+    : {...lastPlanBefore(),count:isMath?(student.mathClassWS||5):(student.readingClassWS||5),note:""}
+  const [level,setLevel] = useState(def.level)
+  const [ws,setWs] = useState(def.ws)
+  const [count,setCount] = useState(def.count)
+  const [note,setNote] = useState(def.note)
+  const fmt = new Date(dateStr+"T12:00:00").toLocaleDateString("en-CA",{weekday:"long",month:"short",day:"numeric"})
+  const endWs = Math.min(200,ws+count-1)
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px"}}>
+        <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>📅 {existingPlan?"Edit":"Set"} Plan</div>
+            <div style={{fontSize:12,color:"#64748b",marginTop:2}}>{student.name} · {isMath?"📐 Math":"📖 Reading"} · {fmt}</div>
+          </div>
+          <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:32,height:32,cursor:"pointer",fontSize:14}}>✕</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+          <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>LEVEL</div>
+            <select value={level} onChange={e=>setLevel(e.target.value)} style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color,outline:"none"}}>
+              {seq.map((l:string)=><option key={l}>{l}</option>)}
+            </select>
+          </div>
+          <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+            <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>START WS</div>
+            <input type="number" inputMode="numeric" min={1} max={200} value={ws}
+              onChange={e=>setWs(Math.max(1,Math.min(200,parseInt(e.target.value)||1)))}
+              style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none"}}/>
+          </div>
+        </div>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:8}}>WORKSHEETS</div>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <CounterBtn size={28} onClick={()=>setCount(Math.max(1,count-1))}>−</CounterBtn>
+            <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:24,color:"#1e293b"}}>{count}</span>
+            <CounterBtn size={28} onClick={()=>setCount(Math.min(20,count+1))}>+</CounterBtn>
+          </div>
+          <div style={{textAlign:"center",fontSize:12,color,fontWeight:700,marginTop:6}}>{level}{ws} → {level}{endWs}</div>
+        </div>
+        <input value={note} onChange={e=>setNote(e.target.value)}
+          placeholder="Note — e.g. missed class, carry-forward from Mon"
+          style={{width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:12,boxSizing:"border-box" as any,outline:"none",marginBottom:12}}/>
+        <div style={{display:"flex",gap:8}}>
+          {existingPlan&&<button onClick={()=>onDelete(existingPlan)} style={{padding:"12px 14px",border:"1.5px solid #fca5a5",background:"#fef2f2",color:"#dc2626",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>🗑</button>}
+          <button onClick={onClose} style={{padding:"12px 14px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:13}}>Cancel</button>
+          <button onClick={()=>onSave({id:`p_${student.id}_${subject}_${dateStr}`,student_id:student.id,subject,plan_date:dateStr,level,start_ws:ws,ws_count:count,note:note||null})}
+            style={{flex:1,padding:"12px",border:"none",background:`linear-gradient(135deg,${color},${color}bb)`,color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>
+            💾 Save Plan
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Record Book View — paper record sheet style ────────────────
 // Layout mirrors the Kumon record book exactly:
 // Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
 // Score boxes map to individual worksheets done that day.
 // Circle = corrections verified for that worksheet.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange}) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan}:any) {
   const todayRef = new Date()
+  const [dayPlanModal,setDayPlanModal] = useState<any>(null)
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
   const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate()
@@ -990,8 +1067,8 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
                       const rowBg = !hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
                       return (
                         <tr key={dayNum}
-                          onClick={hasAnything||isClassDay?()=>onOpen(s.id):undefined}
-                          style={{borderBottom:"1px solid #f1f5f9",cursor:hasAnything||isClassDay?"pointer":"default",
+                          onClick={()=>setDayPlanModal({student:s,dateStr,subject:sub,existingPlan:plan||null})}
+                          style={{borderBottom:"1px solid #f1f5f9",cursor:"pointer",
                             background:rowBg,opacity:isFuture&&!hasAnything?0.4:1,
                             outline:isToday?"2px solid "+color:"none",outlineOffset:"-1px"}}>
                           <td style={{padding:"4px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0"}}>{dayNum}</td>
