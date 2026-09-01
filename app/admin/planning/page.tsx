@@ -210,8 +210,13 @@ async function fetchPlansRange(fromDate: string, toDate: string) {
   return out
 }
 async function upsertPlans(rows: any[]) {
-  const { error } = await supabase.from('kumon_plans').upsert(rows)
-  if (error) throw error
+  // Batch in chunks of 10 to avoid Supabase row limits
+  const CHUNK = 10
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK)
+    const { error } = await supabase.from('kumon_plans').upsert(chunk)
+    if (error) throw error
+  }
 }
 async function deletePlan(id: string) {
   const { error } = await supabase.from('kumon_plans').delete().eq('id', id)
@@ -884,7 +889,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
         <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
       ) : viewMode==="record" ? (
         <RecordBookView students={allStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions}
-          onSavePlan={async (rows:any[])=>{ await upsertPlans(rows); setPlans((prev:any)=>{ const n={...prev}; for(const r of rows) n[planKey(r.student_id,r.subject,r.plan_date)]=r; return n; }); showToast("📅 Plan saved!"); }}
+          onSavePlan={async (rows:any[])=>{ try { await upsertPlans(rows); setPlans((prev:any)=>{ const n={...prev}; for(const r of rows) n[planKey(r.student_id,r.subject,r.plan_date)]=r; return n; }); showToast(`📅 ${rows.length} plan${rows.length>1?"s":""} saved!`); } catch(e:any){ showToast("Save failed: "+e?.message,"error"); }}}
           onDeletePlan={async (p:any)=>{ await deletePlan(p.id); setPlans((prev:any)=>{ const n={...prev}; delete n[planKey(p.student_id,p.subject,p.plan_date)]; return n; }); showToast("Plan removed"); }}
           onSaveSession={async (studentId:string, dateStr:string, subject:string, sessData:any)=>{
             const existing = monthSessions[studentId+"|"+dateStr]||{}
@@ -893,6 +898,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
             setMonthSessions((prev:any)=>({...prev,[studentId+"|"+dateStr]:updated}))
             showToast("✅ Scores saved!")
           }}
+          showToast={showToast}
           onMonthChange={async (y:number,m:number)=>{
             try {
               const from=`${y}-${String(m+1).padStart(2,"0")}-01`;
@@ -932,7 +938,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 // ─── Record Book View — Excel-style inline editing ───────────────
 // Columns: Date | Day | C/H | Level | No. | WS# | Time | AT | 1..10 scores | $ | Total $
 // Click any cell to edit directly. Tab moves across. Month auto-populate from start point.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession}:any) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession,showToast}:any) {
   const todayRef = new Date()
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
@@ -1032,8 +1038,16 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
       const nxt = advancePos(curLevel,curWs,wsCount,sub)
       curLevel=nxt.level; curWs=nxt.worksheet
     }
-    if (rows.length===0) { setAutoPopModal(null); return; }
-    try { await onSavePlan(rows); } catch(e:any){ console.error("autofill failed:",e); }
+    if (rows.length===0) {
+      setAutoPopModal(null)
+      return
+    }
+    try {
+      await onSavePlan(rows)
+    } catch(e:any){
+      console.error("autofill failed:",e)
+      alert("Auto-fill failed: "+(e?.message||String(e)))
+    }
     setAutoPopModal(null)
   }
 
