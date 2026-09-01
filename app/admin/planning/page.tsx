@@ -929,71 +929,114 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 
 
 // ─── Day Plan Modal — edit/set plan for a specific date from record view ──
+// ─── Record Book View — Excel-style inline editing ───────────────
+// Columns: Date | Day | C/H | Level | No. | WS# | Time | AT | 1..10 scores | $ | Total $
+// Click any cell to edit directly. Tab moves across. Month auto-populate from start point.
 function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession}:any) {
   const todayRef = new Date()
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
-  const [editRow,setEditRow] = useState<any>(null) // {studentId,sub,dateStr}
-  const [editState,setEditState] = useState<any>({})
-  const [saving,setSaving] = useState(false)
+  // editCell: {studentId, sub, dateStr, field} — which cell is active
+  const [editCell,setEditCell] = useState<any>(null)
+  // rowEdits: {studentId|sub|dateStr: {level,startWs,count,scores,circled,timeMin,dayType,note,isAT,money,tasks}}
+  const [rowEdits,setRowEdits] = useState<any>({})
+  const [saving,setSaving] = useState<any>({})
+  const [autoPopModal,setAutoPopModal] = useState<any>(null)
 
   const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate()
   const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString("en-CA",{month:"long",year:"numeric"})
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
   const monthStr = `${viewYear}-${String(viewMonth+1).padStart(2,"0")}`
+  const MAX_SC = 10
 
   const shiftMonth = (n:number) => {
     const d = new Date(viewYear, viewMonth+n, 1)
     setViewYear(d.getFullYear()); setViewMonth(d.getMonth())
-    setEditRow(null)
+    setEditCell(null); setRowEdits({})
     onMonthChange && onMonthChange(d.getFullYear(), d.getMonth())
   }
 
-  const openEdit = (s:any, sub:string, dateStr:string, plan:any, sd:any) => {
-    if (editRow?.studentId===s.id&&editRow?.sub===sub&&editRow?.dateStr===dateStr) {
-      setEditRow(null); return
-    }
+  // Get or init row edit state
+  const getRowEdit = (s:any, sub:string, dateStr:string, plan:any, sd:any) => {
+    const key = s.id+"|"+sub+"|"+dateStr
+    if (rowEdits[key]) return rowEdits[key]
     const level = sd?.fromLevel||plan?.level||(sub==="math"?s.mathLevel:s.readingLevel)
     const startWs = sd?.fromWorksheet||plan?.start_ws||(sub==="math"?s.mathWorksheet:s.readingWorksheet)
-    const count = plan?.ws_count||(sub==="math"?s.mathClassWS:s.readingClassWS)||5
-    const scores = sd?.scores||Array(count).fill(100)
-    const circled = sd?.circled||Array(count).fill(false)
+    const count = sd?.done||plan?.ws_count||0
+    const scores = sd?.scores||[]
+    const circled = sd?.circled||[]
     const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(DAY_NAMES[new Date(dateStr+"T12:00:00").getDay()])
-    setEditRow({studentId:s.id,sub,dateStr})
-    setEditState({level,startWs,count,scores,circled,timeMin:sd?.timeMinutes||"",dayType:plan?.day_type||(isClassDay?"C":"H"),note:plan?.note||""})
+    const tasks = sd?.moneyTasks||{}
+    const money = sd?.kumonMoney ?? calcTaskMoney(tasks)
+    return {level,startWs,count,scores,circled,timeMin:sd?.timeMinutes||"",
+      dayType:plan?.day_type||(isClassDay?"C":"H"),
+      isAT:plan?.is_at||plan?.note?.toLowerCase().includes("achievement test")||false,
+      note:plan?.note||"",tasks,money}
   }
 
-  const adjCount = (n:number) => {
-    setEditState((p:any)=>({...p,count:n,
-      scores:n>p.scores.length?[...p.scores,...Array(n-p.scores.length).fill(100)]:p.scores.slice(0,n),
-      circled:n>p.circled.length?[...p.circled,...Array(n-p.circled.length).fill(false)]:p.circled.slice(0,n)
-    }))
+  const setCell = (s:any, sub:string, dateStr:string, plan:any, sd:any, patch:any) => {
+    const key = s.id+"|"+sub+"|"+dateStr
+    const cur = getRowEdit(s,sub,dateStr,plan,sd)
+    const next = {...cur,...patch}
+    // If count changed, resize scores/circled arrays
+    if (patch.count !== undefined && patch.count !== cur.count) {
+      const n = patch.count
+      next.scores = n>cur.scores.length?[...cur.scores,...Array(n-cur.scores.length).fill(100)]:cur.scores.slice(0,n)
+      next.circled = n>cur.circled.length?[...cur.circled,...Array(n-cur.circled.length).fill(false)]:cur.circled.slice(0,n)
+    }
+    // Auto-calc money from tasks
+    if (patch.tasks !== undefined) next.money = calcTaskMoney(next.tasks)
+    setRowEdits((p:any)=>({...p,[key]:next}))
   }
 
-  const saveRow = async (s:any) => {
-    setSaving(true)
-    const {level,startWs,count,scores,circled,timeMin,dayType,note} = editState
+  const saveRow = async (s:any, sub:string, dateStr:string, plan:any, sd:any) => {
+    const key = s.id+"|"+sub+"|"+dateStr
+    const e = rowEdits[key]||getRowEdit(s,sub,dateStr,plan,sd)
+    if (!e.count && !e.isAT) return // nothing to save
+    setSaving((p:any)=>({...p,[key]:true}))
     try {
-      const plan = {id:`p_${s.id}_${editRow.sub}_${editRow.dateStr}`,student_id:s.id,subject:editRow.sub,
-        plan_date:editRow.dateStr,level,start_ws:startWs,ws_count:count,note:note||null,day_type:dayType}
-      await onSavePlan([plan])
-      const sessData = {done:count,scores,circled,timeMinutes:timeMin,fromLevel:level,fromWorksheet:startWs}
-      await onSaveSession(s.id, editRow.dateStr, editRow.sub, sessData)
-      setEditRow(null)
-    } catch(e:any){ console.error(e) }
-    setSaving(false)
+      const planRow = {id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
+        plan_date:dateStr,level:e.level,start_ws:e.startWs,ws_count:e.count||0,
+        note:e.isAT?"Achievement Test":(e.note||null),day_type:e.dayType,is_at:e.isAT}
+      await onSavePlan([planRow])
+      if (e.count>0||e.scores.length>0) {
+        const sessData = {done:e.count,scores:e.scores,circled:e.circled,
+          timeMinutes:e.timeMin,fromLevel:e.level,fromWorksheet:e.startWs,
+          moneyTasks:e.tasks,kumonMoney:e.money}
+        await onSaveSession(s.id, dateStr, sub, sessData)
+      }
+      setEditCell(null)
+    } catch(err:any){ console.error(err) }
+    setSaving((p:any)=>({...p,[key]:false}))
   }
 
-  const deleteRow = async (s:any, plan:any) => {
-    if (!plan) return
-    await onDeletePlan(plan)
-    setEditRow(null)
+  // Auto-populate whole month
+  const autoPopulate = async (s:any, sub:string, startLevel:string, startWs:number, classWS:number, homeworkWS:number) => {
+    const rows:any[] = []
+    let curLevel = startLevel, curWs = startWs
+    for (let di=0;di<daysInMonth;di++) {
+      const dayNum = di+1
+      const dateStr = `${monthStr}-${String(dayNum).padStart(2,"0")}`
+      const dow = new Date(dateStr+"T12:00:00").getDay()
+      const dayLabel = DAY_NAMES[dow]
+      const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(dayLabel)
+      const wsCount = isClassDay ? classWS : homeworkWS
+      if (wsCount<=0) continue
+      rows.push({id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
+        plan_date:dateStr,level:curLevel,start_ws:curWs,ws_count:wsCount,day_type:isClassDay?"C":"H",note:null})
+      const nxt = advancePos(curLevel,curWs,wsCount,sub)
+      curLevel=nxt.level; curWs=nxt.worksheet
+    }
+    await onSavePlan(rows)
+    setAutoPopModal(null)
   }
 
   const active = students.filter((s:any)=>s.status!=="inactive")
   if (!active.length) return <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>No students</div>
 
-  const MAX_SC = 10
+  const cell = (style:any, content:any, onClick?:any) => (
+    <td onClick={onClick} style={{padding:"2px 2px",borderRight:"1px solid #e2e8f0",verticalAlign:"middle",...style}}>{content}</td>
+  )
 
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
@@ -1012,215 +1055,283 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
           </div>
           {[s.mathEnabled&&{sub:"math",label:"Math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet},
             s.readingEnabled&&{sub:"reading",label:"Reading",color:"#ec4899",level:s.readingLevel,ws:s.readingWorksheet}]
-            .filter(Boolean).map(({sub,label,color,level,ws}:any)=>(
+            .filter(Boolean).map(({sub,label,color,level,ws}:any)=>{
+            const monthTotal = Array.from({length:daysInMonth},(_,di)=>{
+              const dateStr=`${monthStr}-${String(di+1).padStart(2,"0")}`
+              const key=s.id+"|"+sub+"|"+dateStr
+              const re=rowEdits[key]
+              if (re) return re.money||0
+              const rawSess=dateStr===selectedDate?getSession(s.id):monthSessions[s.id+"|"+dateStr]
+              const sd:any=rawSess?(sub==="math"?rawSess.math:rawSess.reading):null
+              return sd?.kumonMoney ?? calcTaskMoney(sd?.moneyTasks||{})
+            }).reduce((a:number,b:number)=>a+b,0)
+
+            return (
             <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
-              <div style={{fontSize:10,fontWeight:800,color,padding:"3px 12px",background:color+"0a"}}>{label.toUpperCase()}</div>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"3px 12px",background:color+"0a"}}>
+                <span style={{fontSize:10,fontWeight:800,color}}>{label.toUpperCase()}</span>
+                <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                  {monthTotal>0&&<span style={{fontSize:11,fontWeight:800,color:"#16a34a"}}>💰 ${monthTotal} this month</span>}
+                  <button onClick={()=>setAutoPopModal({s,sub,color,level,ws,
+                    classWS:sub==="math"?s.mathClassWS:s.readingClassWS,
+                    homeworkWS:sub==="math"?s.mathHomeworkWS:s.readingHomeworkWS})}
+                    style={{border:"none",background:color+"22",color,borderRadius:6,padding:"3px 10px",fontSize:10,fontWeight:800,cursor:"pointer"}}>
+                    📅 Auto-fill month
+                  </button>
+                </div>
+              </div>
               <div style={{overflowX:"auto"}}>
-                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:500}}>
+                <table style={{borderCollapse:"collapse",fontSize:11,width:"100%",minWidth:600}}>
                   <thead>
                     <tr style={{background:"#f8fafc",borderBottom:"1.5px solid #e2e8f0"}}>
-                      {["Date","Day","C/H","Level","No.","Time","AT",...Array.from({length:MAX_SC},(_,i)=>i+1),""].map((h,i)=>(
+                      {["Date","Day","C/H","Level","No.","WS","⏱","AT",...Array.from({length:MAX_SC},(_,i)=>i+1),"$"].map((h,i)=>(
                         <th key={i} style={{padding:"4px 3px",textAlign:"center",color:"#475569",fontWeight:700,
                           borderRight:"1px solid #e2e8f0",whiteSpace:"nowrap",
-                          minWidth:i===0?26:i<7?24:i===MAX_SC+7?28:20,
-                          fontSize:i>=7&&i<MAX_SC+7?10:11,
-                          title:h==="AT"?"Achievement Test":undefined}}>{h}</th>
+                          minWidth:i===0?26:i<8?22:i===MAX_SC+8?28:20,fontSize:i>=8&&i<MAX_SC+8?10:11}}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {Array.from({length:daysInMonth},(_,di)=>{
-                      const dayNum = di+1
-                      const dateStr = `${monthStr}-${String(dayNum).padStart(2,"0")}`
-                      const dow = new Date(dateStr+"T12:00:00").getDay()
-                      const dayLabel = DAY_NAMES[dow]
-                      const plan = plans[planKey(s.id,sub,dateStr)]
-                      const isToday = dateStr===selectedDate
-                      const rawSess = isToday ? getSession(s.id) : monthSessions[s.id+"|"+dateStr]
-                      const sd:any = rawSess ? (sub==="math"?rawSess.math:rawSess.reading) : null
-                      const done = sd?.done||0
-                      const scores:number[] = sd?.scores||[]
-                      const circled:boolean[] = sd?.circled||[]
-                      const fromLevel = sd?.fromLevel||plan?.level||level
-                      const fromWs = sd?.fromWorksheet||plan?.start_ws||ws
-                      const plannedCount = plan?.ws_count||0
-                      const timeMin = sd?.timeMinutes
-                      const timePerWS = (timeMin&&done) ? (parseFloat(timeMin)/done).toFixed(1) : null
-                      const wsItems = (done>0||plannedCount>0) ? getWsItems(fromLevel,fromWs,Math.max(done,plannedCount),sub) : []
-                      const isClassDay = (sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(dayLabel)
-                      const hasAnything = done>0||plannedCount>0
-                      const allCircled = done>0&&circled.filter(Boolean).length===done
-                      const isFuture = dateStr>selectedDate
-                      const isAT = plan?.note?.toLowerCase().includes("achievement test")||plan?.is_at
-                      const isEditing = editRow?.studentId===s.id&&editRow?.sub===sub&&editRow?.dateStr===dateStr
-                      const rowBg = isEditing?"#eff6ff":!hasAnything?"white":allCircled?"#f0fdf4":done>0&&scores.some(v=>v<100)?"#fffbeb":done>0?"#f8faff":"#faf5ff"
+                      const dayNum=di+1
+                      const dateStr=`${monthStr}-${String(dayNum).padStart(2,"0")}`
+                      const dow=new Date(dateStr+"T12:00:00").getDay()
+                      const dayLabel=DAY_NAMES[dow]
+                      const plan=plans[planKey(s.id,sub,dateStr)]
+                      const isToday=dateStr===selectedDate
+                      const rawSess=isToday?getSession(s.id):monthSessions[s.id+"|"+dateStr]
+                      const sd:any=rawSess?(sub==="math"?rawSess.math:rawSess.reading):null
+                      const editKey=s.id+"|"+sub+"|"+dateStr
+                      const e=getRowEdit(s,sub,dateStr,plan,sd)
+                      const isDirty=!!rowEdits[editKey]
+                      const isSaving=saving[editKey]
+                      const isClassDay=(sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?.includes(dayLabel)
+                      const hasAnything=e.count>0||e.isAT||(plan!=null)
+                      const allCircled=e.count>0&&e.circled.slice(0,e.count).every(Boolean)
+                      const isFuture=dateStr>selectedDate
+                      const rowBg=isToday?color+"0a":!hasAnything?"white":allCircled?"#f0fdf4":e.count>0&&e.scores.some((v:number)=>v<100)?"#fffbeb":e.count>0?"#f8faff":"#faf5ff"
+                      const wsItems=e.count>0?getWsItems(e.level,e.startWs,e.count,sub):[]
+                      const activeCell=(field:string)=>editCell?.studentId===s.id&&editCell?.sub===sub&&editCell?.dateStr===dateStr&&editCell?.field===field
+                      const cellStyle=(field:string)=>({background:activeCell(field)?"#dbeafe":"transparent",cursor:"cell",outline:activeCell(field)?`2px solid ${color}`:"none",outlineOffset:-1})
+                      const focusCell=(field:string)=>{setEditCell({studentId:s.id,sub,dateStr,field})}
+
+                      const inlineInput=(field:string, value:any, onChange:(v:any)=>void, width:number, type="text")=>(
+                        <input type={type} inputMode={type==="number"?"numeric":undefined}
+                          value={value} autoFocus={activeCell(field)}
+                          onChange={e=>{e.stopPropagation();onChange(e.target.value)}}
+                          onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
+                          onKeyDown={e=>{if(e.key==="Enter"||e.key==="Tab"){e.preventDefault();saveRow(s,sub,dateStr,plan,sd);setEditCell(null)}}}
+                          style={{width,border:"none",outline:"none",background:"transparent",fontSize:11,fontWeight:700,textAlign:"center",color:"#1e293b"}}/>
+                      )
 
                       return (
                         <React.Fragment key={dayNum}>
-                        {/* ── Normal row ── */}
-                        <tr onClick={()=>openEdit(s,sub,dateStr,plan,sd)}
-                          style={{borderBottom:isEditing?"none":"1px solid #f1f5f9",cursor:"pointer",
-                            background:rowBg,opacity:isFuture&&!hasAnything?0.4:1,
-                            outline:isToday?"2px solid "+color:"none",outlineOffset:"-1px"}}>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0"}}>{dayNum}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",color:"#94a3b8",fontSize:9,borderRight:"1px solid #e2e8f0"}}>{dayLabel}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
-                            {(plan?.day_type||isClassDay)?
-                              <span style={{fontSize:9,fontWeight:800,color:plan?.day_type==="C"||isClassDay?color:"#64748b",background:(plan?.day_type==="C"||isClassDay)?color+"18":"#f1f5f9",borderRadius:4,padding:"1px 5px"}}>{plan?.day_type||( isClassDay?"C":"H")}</span>
-                              :hasAnything?<span style={{fontSize:9,color:"#64748b",background:"#f1f5f9",borderRadius:4,padding:"1px 5px",fontWeight:700}}>H</span>:null}
+                        <tr style={{borderBottom:isDirty?"2px solid "+color:"1px solid #f1f5f9",
+                          background:rowBg,opacity:isFuture&&!hasAnything?0.35:1}}>
+
+                          {/* Date */}
+                          <td style={{padding:"3px 3px",textAlign:"center",fontWeight:isToday?800:400,color:isToday?color:"#475569",borderRight:"1px solid #e2e8f0",fontSize:11}}>{dayNum}</td>
+                          {/* Day */}
+                          <td style={{padding:"3px 3px",textAlign:"center",color:"#94a3b8",fontSize:9,borderRight:"1px solid #e2e8f0"}}>{dayLabel}</td>
+
+                          {/* C/H — click to toggle */}
+                          <td onClick={()=>{setCell(s,sub,dateStr,plan,sd,{dayType:e.dayType==="C"?"H":"C"});setTimeout(()=>saveRow(s,sub,dateStr,plan,{...sd,...(rowEdits[editKey]||{}),dayType:e.dayType==="C"?"H":"C"}),50)}}
+                            style={{padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0",cursor:"pointer"}}>
+                            {(hasAnything||isClassDay)&&<span style={{fontSize:9,fontWeight:800,
+                              color:e.dayType==="C"?color:"#64748b",
+                              background:e.dayType==="C"?color+"18":"#f1f5f9",
+                              borderRadius:4,padding:"1px 5px"}}>{e.dayType||( isClassDay?"C":"H")}</span>}
                           </td>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?color:plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromLevel:""}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",fontWeight:700,color:done>0?"#1e293b":plannedCount?"#94a3b8":"#e2e8f0",borderRight:"1px solid #e2e8f0"}}>{hasAnything?fromWs:""}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",color:"#64748b",borderRight:"1px solid #e2e8f0"}}>{timePerWS?`${timePerWS}m`:""}</td>
-                          <td style={{padding:"4px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
-                            {isAT&&<span style={{fontSize:9,fontWeight:800,color:"#7c3aed",background:"#f5f3ff",borderRadius:4,padding:"1px 4px"}}>AT</span>}
+
+                          {/* Level — click to edit */}
+                          <td onClick={()=>focusCell("level")} style={{...cellStyle("level"),padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            {activeCell("level")?(
+                              <select value={e.level} autoFocus onChange={ev=>{setCell(s,sub,dateStr,plan,sd,{level:ev.target.value});}}
+                                onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
+                                style={{border:"none",outline:"none",background:"transparent",fontSize:11,fontWeight:700,color,width:36}}>
+                                {levelsFor(sub).map((l:string)=><option key={l}>{l}</option>)}
+                              </select>
+                            ):<span style={{fontWeight:700,color:e.count>0?color:hasAnything?"#94a3b8":"#e2e8f0"}}>{hasAnything?e.level:""}</span>}
                           </td>
+
+                          {/* No. (start WS) */}
+                          <td onClick={()=>focusCell("startWs")} style={{...cellStyle("startWs"),padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            {activeCell("startWs")?inlineInput("startWs",e.startWs,(v)=>setCell(s,sub,dateStr,plan,sd,{startWs:Math.max(1,Math.min(200,parseInt(v)||1))}),32,"number")
+                              :<span style={{fontWeight:700,color:e.count>0?"#1e293b":hasAnything?"#94a3b8":"#e2e8f0"}}>{hasAnything?e.startWs:""}</span>}
+                          </td>
+
+                          {/* WS count */}
+                          <td onClick={()=>focusCell("count")} style={{...cellStyle("count"),padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            {activeCell("count")?inlineInput("count",e.count,(v)=>setCell(s,sub,dateStr,plan,sd,{count:Math.max(0,Math.min(20,parseInt(v)||0))}),24,"number")
+                              :<span style={{fontWeight:700,color:e.count>0?"#1e293b":hasAnything?"#94a3b8":"#e2e8f0"}}>{hasAnything?e.count:""}</span>}
+                          </td>
+
+                          {/* Time */}
+                          <td onClick={()=>focusCell("time")} style={{...cellStyle("time"),padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            {activeCell("time")?inlineInput("time",e.timeMin,(v)=>setCell(s,sub,dateStr,plan,sd,{timeMin:v.replace(/[^0-9]/g,"")}),28,"number")
+                              :<span style={{color:"#64748b"}}>{e.timeMin?`${e.timeMin}m`:""}</span>}
+                          </td>
+
+                          {/* AT checkbox */}
+                          <td style={{padding:"3px 3px",textAlign:"center",borderRight:"1px solid #e2e8f0"}}>
+                            <input type="checkbox" checked={!!e.isAT}
+                              onChange={ev=>{setCell(s,sub,dateStr,plan,sd,{isAT:ev.target.checked,note:ev.target.checked?"Achievement Test":""});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),50)}}
+                              style={{accentColor:"#7c3aed",cursor:"pointer"}}/>
+                          </td>
+
+                          {/* Score cells 1-10 */}
                           {Array.from({length:MAX_SC},(_,i)=>{
-                            const sc=scores[i],isCircled=circled[i],hasDone=i<done,isPlanned=!hasDone&&i<plannedCount,wsItem=wsItems[i]
+                            const sc=e.scores[i], isC=e.circled[i]
+                            const hasDone=i<e.count
+                            const wsItem=wsItems[i]
+                            const field=`score_${i}`
                             return (
-                              <td key={i} style={{padding:"2px 1px",textAlign:"center",borderRight:i<MAX_SC-1?"1px solid #f1f5f9":"none"}}>
+                              <td key={i} onClick={()=>{if(hasDone){focusCell(field)}}}
+                                style={{padding:"2px 1px",textAlign:"center",borderRight:i<MAX_SC-1?"1px solid #f1f5f9":"1px solid #e2e8f0",cursor:hasDone?"cell":"default",
+                                  background:hasDone?(isC?"#dcfce7":sc!=null&&sc<100?"#fef9c3":"white"):"transparent"}}>
                                 {hasDone?(
-                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,
-                                    border:isCircled?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
-                                    background:isCircled?"#dcfce7":sc<100?"#fef9c3":"white",
-                                    color:isCircled?"#16a34a":sc<100?"#d97706":"#374151"}}>{sc!=null?sc:""}</span>
-                                ):isPlanned?(
+                                  activeCell(field)?(
+                                    <input type="number" inputMode="numeric" value={sc??100} autoFocus
+                                      onChange={ev=>{const n=[...e.scores];n[i]=Math.max(0,Math.min(100,parseInt(ev.target.value)||0));setCell(s,sub,dateStr,plan,sd,{scores:n})}}
+                                      onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
+                                      onKeyDown={ev=>{
+                                        if(ev.key==="Tab"){ev.preventDefault();
+                                          if(i<e.count-1)focusCell(`score_${i+1}`)
+                                          else saveRow(s,sub,dateStr,plan,sd)
+                                        }
+                                        if(ev.key==="Enter")saveRow(s,sub,dateStr,plan,sd)
+                                      }}
+                                      style={{width:22,border:"none",outline:"none",background:"transparent",fontSize:10,fontWeight:800,textAlign:"center"}}/>
+                                  ):(
+                                    <span onDoubleClick={()=>{const c=[...e.circled];c[i]=!c[i];setCell(s,sub,dateStr,plan,sd,{circled:c});setTimeout(()=>saveRow(s,sub,dateStr,plan,sd),50)}}
+                                      style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:10,fontWeight:800,cursor:"pointer",
+                                        border:isC?"2.5px solid #16a34a":"1.5px solid #e2e8f0",
+                                        background:isC?"#dcfce7":sc!=null&&sc<100?"#fef9c3":"white",
+                                        color:isC?"#16a34a":sc!=null&&sc<100?"#d97706":"#374151"}}
+                                      title="Double-click to circle corrections">{sc!=null?sc:100}</span>
+                                  )
+                                ):i<(plan?.ws_count||0)?(
                                   <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:20,height:20,borderRadius:"50%",fontSize:8,border:"1.5px dashed #cbd5e1",color:"#94a3b8"}}>{wsItem?wsItem.wsNum:""}</span>
                                 ):null}
                               </td>
                             )
                           })}
-                          <td style={{padding:"2px 4px",textAlign:"center"}}>
-                            <span style={{color:isEditing?color:"#cbd5e1",fontSize:12}}>{isEditing?"▲":"✎"}</span>
+
+                          {/* $ earned today */}
+                          <td onClick={()=>focusCell("money")} style={{...cellStyle("money"),padding:"3px 3px",textAlign:"center",borderRight:"none",minWidth:28}}>
+                            {activeCell("money")?(
+                              <input type="number" inputMode="numeric" value={e.money||""} autoFocus
+                                onChange={ev=>setCell(s,sub,dateStr,plan,sd,{money:parseInt(ev.target.value)||0})}
+                                onBlur={()=>saveRow(s,sub,dateStr,plan,sd)}
+                                onKeyDown={ev=>{if(ev.key==="Enter")saveRow(s,sub,dateStr,plan,sd)}}
+                                style={{width:30,border:"none",outline:"none",background:"transparent",fontSize:11,fontWeight:800,textAlign:"center"}}/>
+                            ):e.money>0?(
+                              <span style={{fontWeight:800,color:"#16a34a",fontSize:11}}>${e.money}</span>
+                            ):null}
                           </td>
                         </tr>
-
-                        {/* ── Inline edit row ── */}
-                        {isEditing&&(
-                          <tr style={{background:"#eff6ff",borderBottom:"2px solid "+color}}>
-                            <td colSpan={MAX_SC+8} style={{padding:"10px 12px"}}>
-                              <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"flex-start"}}>
-
-                                {/* C/H */}
-                                <div style={{display:"flex",gap:4}}>
-                                  {["C","H"].map(t=>(
-                                    <button key={t} onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,dayType:t}))}}
-                                      style={{padding:"4px 10px",border:"none",borderRadius:7,fontWeight:800,fontSize:11,cursor:"pointer",
-                                        background:editState.dayType===t?(t==="C"?color:"#64748b"):"#e2e8f0",
-                                        color:editState.dayType===t?"white":"#64748b"}}>
-                                      {t==="C"?"🏫 C":"🏠 H"}
-                                    </button>
-                                  ))}
-                                </div>
-
-                                {/* Level */}
-                                <select value={editState.level} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,level:e.target.value}))}}
-                                  style={{border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,color,background:"white",outline:"none"}}>
-                                  {levelsFor(sub).map((l:string)=><option key={l}>{l}</option>)}
-                                </select>
-
-                                {/* Start WS */}
-                                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                  <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>WS</span>
-                                  <input type="number" inputMode="numeric" min={1} max={200} value={editState.startWs}
-                                    onClick={e=>e.stopPropagation()}
-                                    onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,startWs:Math.max(1,Math.min(200,parseInt(e.target.value)||1))}))}}
-                                    style={{width:50,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,outline:"none",textAlign:"center"}}/>
-                                </div>
-
-                                {/* Count */}
-                                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                  <button onClick={e=>{e.stopPropagation();adjCount(Math.max(1,editState.count-1))}} style={{width:24,height:24,border:"1.5px solid #bfdbfe",borderRadius:6,background:"white",cursor:"pointer",fontWeight:800}}>−</button>
-                                  <span style={{fontWeight:800,fontSize:14,minWidth:20,textAlign:"center"}}>{editState.count}</span>
-                                  <button onClick={e=>{e.stopPropagation();adjCount(Math.min(20,editState.count+1))}} style={{width:24,height:24,border:"1.5px solid #bfdbfe",borderRadius:6,background:"white",cursor:"pointer",fontWeight:800}}>+</button>
-                                  <span style={{fontSize:10,color,fontWeight:700}}>{editState.level}{editState.startWs}→{Math.min(200,editState.startWs+editState.count-1)}</span>
-                                </div>
-
-                                {/* Time */}
-                                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                                  <span style={{fontSize:10,color:"#64748b",fontWeight:700}}>⏱</span>
-                                  <input type="number" inputMode="numeric" value={editState.timeMin} placeholder="min"
-                                    onClick={e=>e.stopPropagation()}
-                                    onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,timeMin:e.target.value.replace(/[^0-9]/g,"")}))}}
-                                    style={{width:44,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 6px",fontSize:12,fontWeight:700,outline:"none",textAlign:"center"}}/>
-                                </div>
-
-                                {/* AT checkbox */}
-                                <label onClick={e=>e.stopPropagation()} style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",fontSize:11,fontWeight:700,color:"#7c3aed"}}>
-                                  <input type="checkbox" checked={editState.note?.toLowerCase().includes("achievement test")||false}
-                                    onChange={e=>setEditState((p:any)=>({...p,note:e.target.checked?"Achievement Test":""}))}
-                                    style={{accentColor:"#7c3aed"}}/>
-                                  AT
-                                </label>
-
-                                {/* Note */}
-                                <input value={editState.note||""} placeholder="Note" onClick={e=>e.stopPropagation()}
-                                  onChange={e=>{e.stopPropagation();setEditState((p:any)=>({...p,note:e.target.value}))}}
-                                  style={{flex:1,minWidth:80,border:"1.5px solid #bfdbfe",borderRadius:7,padding:"4px 8px",fontSize:11,outline:"none"}}/>
-                              </div>
-
-                              {/* Score chips */}
-                              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:8,alignItems:"center"}}>
-                                <span style={{fontSize:10,color:"#64748b",fontWeight:700,marginRight:2}}>Scores:</span>
-                                {Array.from({length:editState.count},(_,i)=>{
-                                  const wsItem = getWsItems(editState.level,editState.startWs,editState.count,sub)[i]
-                                  const sc = editState.scores[i]??100
-                                  const isC = editState.circled[i]
-                                  return (
-                                    <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-                                      <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>{const c=[...p.circled];c[i]=!c[i];return{...p,circled:c}})}}
-                                        style={{fontSize:8,fontWeight:800,padding:"1px 4px",border:"none",borderRadius:"4px 4px 0 0",cursor:"pointer",
-                                          background:isC?"#16a34a":color,color:"white",minWidth:28}}>
-                                        {isC?"⭕":""}{wsItem?wsItem.wsNum:i+1}
-                                      </button>
-                                      <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>{const sc=[...p.scores];sc[i]=cycleScore(sc[i]??100);return{...p,scores:sc}})}}
-                                        style={{minWidth:28,height:22,border:`1.5px solid ${isC?"#16a34a":sc<100?"#fde68a":"#e2e8f0"}`,borderTop:"none",
-                                          borderRadius:"0 0 4px 4px",cursor:"pointer",fontWeight:800,fontSize:11,
-                                          background:isC?"#f0fdf4":sc<100?"#fffbeb":"white",
-                                          color:isC?"#16a34a":sc<100?"#d97706":"#1e293b"}}>
-                                        {sc}
-                                      </button>
-                                    </div>
-                                  )
-                                })}
-                                <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,scores:Array(p.count).fill(100)}))}}
-                                  style={{fontSize:9,fontWeight:700,border:"none",background:"#f1f5f9",color:"#64748b",borderRadius:6,padding:"3px 8px",cursor:"pointer",marginLeft:4}}>All 100</button>
-                                <button onClick={e=>{e.stopPropagation();setEditState((p:any)=>({...p,circled:Array(p.count).fill(true)}))}}
-                                  style={{fontSize:9,fontWeight:700,border:"none",background:"#f0fdf4",color:"#16a34a",borderRadius:6,padding:"3px 8px",cursor:"pointer"}}>⭕ All</button>
-                              </div>
-
-                              {/* Action buttons */}
-                              <div style={{display:"flex",gap:6,marginTop:8}}>
-                                {plan&&<button onClick={e=>{e.stopPropagation();deleteRow(s,plan)}}
-                                  style={{padding:"6px 12px",border:"1.5px solid #fca5a5",background:"#fef2f2",color:"#dc2626",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>🗑 Remove</button>}
-                                <button onClick={e=>{e.stopPropagation();setEditRow(null)}}
-                                  style={{padding:"6px 12px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>Cancel</button>
-                                <button onClick={e=>{e.stopPropagation();saveRow(s)}} disabled={saving}
-                                  style={{flex:1,padding:"6px 12px",border:"none",background:color,color:"white",borderRadius:8,fontWeight:700,cursor:"pointer",fontSize:11}}>
-                                  {saving?"Saving…":"💾 Save"}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
+                        {isSaving&&<tr><td colSpan={MAX_SC+9} style={{padding:"2px 8px",fontSize:9,color:"#94a3b8",background:"#f8fafc"}}>saving…</td></tr>}
                         </React.Fragment>
                       )
                     })}
                   </tbody>
                   <tfoot>
                     <tr style={{background:"#f8fafc",borderTop:"1.5px solid #e2e8f0"}}>
-                      <td colSpan={7} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
-                        {Object.values(plans).filter((p:any)=>p.student_id===s.id&&p.subject===sub&&p.plan_date?.startsWith(monthStr)).length} planned days · click any row to edit
+                      <td colSpan={8} style={{padding:"4px 8px",fontSize:10,color:"#64748b",fontWeight:700}}>
+                        {Object.values(plans).filter((p:any)=>p.student_id===s.id&&p.subject===sub&&p.plan_date?.startsWith(monthStr)).length} days planned · click cell to edit · double-click score to circle
                       </td>
-                      <td colSpan={MAX_SC+1} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>Current: {level}{ws}</td>
+                      <td colSpan={MAX_SC} style={{padding:"4px 8px",fontSize:10,fontWeight:700,color,textAlign:"right"}}>
+                        Current: {level}{ws}
+                      </td>
+                      <td style={{padding:"4px 8px",fontSize:11,fontWeight:800,color:"#16a34a",textAlign:"center",whiteSpace:"nowrap"}}>
+                        {monthTotal>0?`$${monthTotal}`:""}
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             </div>
-          ))}
+          )})}
         </div>
       ))}
+
+      {/* Auto-populate modal */}
+      {autoPopModal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&setAutoPopModal(null)}>
+          <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px"}}>
+            <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
+            <div style={{fontWeight:800,fontSize:16,color:"#1e293b",marginBottom:4}}>📅 Auto-fill {autoPopModal.sub==="math"?"Math":"Reading"} — {autoPopModal.s.name}</div>
+            <div style={{fontSize:12,color:"#64748b",marginBottom:14}}>Fills every class day and homework day for {monthLabel} based on the schedule and WS counts.</div>
+            <AutoFillForm
+              s={autoPopModal.s} sub={autoPopModal.sub} color={autoPopModal.color}
+              level={autoPopModal.level} ws={autoPopModal.ws}
+              classWS={autoPopModal.classWS} homeworkWS={autoPopModal.homeworkWS}
+              monthStr={monthStr} plans={plans}
+              onFill={(sl:string,sw:number,cws:number,hws:number)=>autoPopulate(autoPopModal.s,autoPopModal.sub,sl,sw,cws,hws)}
+              onClose={()=>setAutoPopModal(null)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AutoFillForm({s,sub,color,level,ws,classWS,homeworkWS,monthStr,plans,onFill,onClose}:any) {
+  const seq = levelsFor(sub)
+  // Find the last plan to continue from
+  const lastPlan:any = Object.values(plans)
+    .filter((p:any)=>p.student_id===s.id&&p.subject===sub)
+    .sort((a:any,b:any)=>a.plan_date<b.plan_date?1:-1)[0]
+  const defStart = lastPlan ? advancePos(lastPlan.level,lastPlan.start_ws,lastPlan.ws_count,sub) : {level,worksheet:ws}
+  const [startLevel,setStartLevel] = useState(defStart.level)
+  const [startWs,setStartWs] = useState(defStart.worksheet)
+  const [cws,setCws] = useState(classWS||5)
+  const [hws,setHws] = useState(homeworkWS||3)
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>START LEVEL</div>
+          <select value={startLevel} onChange={e=>setStartLevel(e.target.value)} style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color,outline:"none"}}>
+            {seq.map((l:string)=><option key={l}>{l}</option>)}
+          </select>
+        </div>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>START WS</div>
+          <input type="number" inputMode="numeric" min={1} max={200} value={startWs}
+            onChange={e=>setStartWs(Math.max(1,Math.min(200,parseInt(e.target.value)||1)))}
+            style={{width:"100%",border:"none",background:"transparent",fontSize:15,fontWeight:700,color:"#1e293b",outline:"none"}}/>
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+          <div style={{fontSize:10,fontWeight:700,color,marginBottom:5}}>🏫 CLASS DAY WS</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>setCws(Math.max(1,cws-1))} style={{width:28,height:28,border:"1.5px solid #e2e8f0",borderRadius:7,background:"white",cursor:"pointer",fontWeight:800}}>−</button>
+            <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:20}}>{cws}</span>
+            <button onClick={()=>setCws(Math.min(20,cws+1))} style={{width:28,height:28,border:"1.5px solid #e2e8f0",borderRadius:7,background:"white",cursor:"pointer",fontWeight:800}}>+</button>
+          </div>
+        </div>
+        <div style={{background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#64748b",marginBottom:5}}>🏠 HOMEWORK DAY WS</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <button onClick={()=>setHws(Math.max(0,hws-1))} style={{width:28,height:28,border:"1.5px solid #e2e8f0",borderRadius:7,background:"white",cursor:"pointer",fontWeight:800}}>−</button>
+            <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:20}}>{hws}</span>
+            <button onClick={()=>setHws(Math.min(20,hws+1))} style={{width:28,height:28,border:"1.5px solid #e2e8f0",borderRadius:7,background:"white",cursor:"pointer",fontWeight:800}}>+</button>
+          </div>
+        </div>
+      </div>
+      <div style={{fontSize:11,color:"#64748b",background:"#f8fafc",borderRadius:8,padding:"8px 12px",marginBottom:14}}>
+        Class days use {cws} WS · Homework days use {hws} WS · Days with no schedule get skipped. Existing plans for this month will be overwritten.
+      </div>
+      <div style={{display:"flex",gap:8}}>
+        <button onClick={onClose} style={{padding:"12px 18px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+        <button onClick={()=>onFill(startLevel,startWs,cws,hws)}
+          style={{flex:1,padding:"12px",border:"none",background:`linear-gradient(135deg,${color},${color}cc)`,color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>
+          📅 Fill {monthLabel}
+        </button>
+      </div>
     </div>
   )
 }
