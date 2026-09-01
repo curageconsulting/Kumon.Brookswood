@@ -695,6 +695,8 @@ export default function AdminPlanning() {
               getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans} kiosk={kiosk}
               allStudents={students} onSetup={setEditModal}
               overstayList={overstayList} notifOn={notifOn} onEnableNotifications={enableNotifications}
+              monthSessions={monthSessions} setMonthSessions={setMonthSessions}
+              setPlans={setPlans} showToast={showToast}
             />
           )}
           {tab==="plan" && (
@@ -1117,6 +1119,16 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
       ))}
     </div>
   )
+      {dayPlanModal&&(
+        <DayPlanModal
+          student={dayPlanModal.student} dateStr={dayPlanModal.dateStr}
+          subject={dayPlanModal.subject} existingPlan={dayPlanModal.existingPlan}
+          plans={plans}
+          onSave={async (row:any)=>{ await onSavePlan([row]); setDayPlanModal(null); }}
+          onDelete={async (p:any)=>{ await onDeletePlan(p); setDayPlanModal(null); }}
+          onClose={()=>setDayPlanModal(null)}
+        />
+      )}
 }
 
 function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate,kiosk={}}) {
