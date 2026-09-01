@@ -1117,8 +1117,6 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
           ))}
         </div>
       ))}
-    </div>
-  )
       {dayPlanModal&&(
         <DayPlanModal
           student={dayPlanModal.student} dateStr={dayPlanModal.dateStr}
@@ -1129,6 +1127,8 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
           onClose={()=>setDayPlanModal(null)}
         />
       )}
+    </div>
+  )
 }
 
 function DayTableView({students,classStudents,todayDay,getSession,onOpen,plans={},selectedDate,kiosk={}}) {
