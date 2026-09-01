@@ -809,7 +809,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={}}) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={},setMonthSessions}) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table" | "record"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -881,7 +881,17 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
       {viewMode==="table" ? (
         <DayTableView students={allTodayStudents} classStudents={classStudents} todayDay={todayDay} getSession={getSession} onOpen={onOpen} plans={plans} selectedDate={selectedDate} kiosk={kiosk} />
       ) : viewMode==="record" ? (
-        <RecordBookView students={allStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions} />
+        <RecordBookView students={allStudents} selectedDate={selectedDate} getSession={getSession} onOpen={onOpen} plans={plans} monthSessions={monthSessions}
+          onMonthChange={async (y,m)=>{
+            try {
+              const from=`${y}-${String(m+1).padStart(2,"0")}-01`;
+              const last=new Date(y,m+1,0).getDate();
+              const to=`${y}-${String(m+1).padStart(2,"0")}-${String(last).padStart(2,"0")}`;
+              const ms = await fetchSessionsForMonth(from,to);
+              setMonthSessions(ms);
+            } catch(e){ console.warn(e); }
+          }}
+        />
       ) : <>
         {classStudents.length===0 ? (
           <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>
@@ -911,18 +921,29 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 // Each ROW = one session date. Columns: Date | Level | No. (start WS) | Time | Score boxes 1..N
 // Score boxes map to individual worksheets done that day.
 // Circle = corrections verified for that worksheet.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={}}) {
-  const ref = new Date(selectedDate+"T12:00:00")
-  const year = ref.getFullYear(), month = ref.getMonth()
-  const daysInMonth = new Date(year, month+1, 0).getDate()
-  const monthLabel = ref.toLocaleDateString("en-CA",{month:"long",year:"numeric"})
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange}) {
+  const todayRef = new Date()
+  const [viewYear,setViewYear] = useState(todayRef.getFullYear())
+  const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
+  const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate()
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString("en-CA",{month:"long",year:"numeric"})
   const MAX_SCORE_COLS = 10
   const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
-  const monthStr = `${year}-${String(month+1).padStart(2,"0")}`
+  const monthStr = `${viewYear}-${String(viewMonth+1).padStart(2,"0")}`
+  const shiftMonth = (n) => {
+    const d = new Date(viewYear, viewMonth+n, 1)
+    setViewYear(d.getFullYear()); setViewMonth(d.getMonth())
+    onMonthChange && onMonthChange(d.getFullYear(), d.getMonth())
+  }
   const active = students.filter(s=>s.status!=="inactive")
   if (!active.length) return <div style={{textAlign:"center",padding:32,color:"#94a3b8"}}>No students</div>
   return (
     <div style={{display:"flex",flexDirection:"column",gap:20}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:"white",borderRadius:12,padding:"10px 16px",boxShadow:"0 1px 3px rgba(0,0,0,0.07)"}}>
+        <button onClick={()=>shiftMonth(-1)} style={{border:"none",background:"#f1f5f9",borderRadius:8,padding:"6px 14px",fontWeight:800,fontSize:16,cursor:"pointer",color:"#475569"}}>‹</button>
+        <span style={{fontWeight:800,fontSize:15,color:"#1e293b"}}>{monthLabel}</span>
+        <button onClick={()=>shiftMonth(1)} style={{border:"none",background:"#f1f5f9",borderRadius:8,padding:"6px 14px",fontWeight:800,fontSize:16,cursor:"pointer",color:"#475569"}}>›</button>
+      </div>
       {active.map(s=>(
         <div key={s.id} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.08)",overflow:"hidden"}}>
           <div style={{background:"#1e3a8a",color:"white",padding:"8px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
