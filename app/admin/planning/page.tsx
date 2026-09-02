@@ -1003,8 +1003,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
     try {
       const planRow:any = {id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
         plan_date:dateStr,level:e.level,start_ws:e.startWs,ws_count:e.count||0,
-        note:e.isAT?"Achievement Test":(e.note||null),day_type:e.dayType}
-      if (e.isAT) planRow.is_at = true
+        note:e.isAT?"Achievement Test":(e.note||null),day_type:e.dayType||"H",is_at:!!e.isAT}
       await onSavePlan([planRow])
       if (e.count>0||e.scores.length>0) {
         const sessData = {done:e.count,scores:e.scores,circled:e.circled,
