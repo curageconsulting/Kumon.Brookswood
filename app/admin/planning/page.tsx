@@ -1289,27 +1289,23 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
       ))}
 
       {/* Auto-populate modal */}
-      {autoPopModal&&(()=>{
-        const apStudent = active.find((x:any)=>x.id===autoPopModal.studentId)
-        if (!apStudent) return null
-        return (
+      {autoPopModal&&active.find((x:any)=>x.id===autoPopModal.studentId)&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:600,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&setAutoPopModal(null)}>
           <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",padding:"16px 16px 32px"}}>
             <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 14px"}}/>
-            <div style={{fontWeight:800,fontSize:16,color:"#1e293b",marginBottom:4}}>📅 Auto-fill {autoPopModal.sub==="math"?"Math":"Reading"} — {apStudent.name}</div>
+            <div style={{fontWeight:800,fontSize:16,color:"#1e293b",marginBottom:4}}>📅 Auto-fill {autoPopModal.sub==="math"?"Math":"Reading"} — {active.find((x:any)=>x.id===autoPopModal.studentId)?.name}</div>
             <div style={{fontSize:12,color:"#64748b",marginBottom:14}}>Fills every class day and homework day for {monthLabel} based on the schedule and WS counts.</div>
             <AutoFillForm
-              s={apStudent} sub={autoPopModal.sub} color={autoPopModal.color}
+              s={active.find((x:any)=>x.id===autoPopModal.studentId)} sub={autoPopModal.sub} color={autoPopModal.color}
               level={autoPopModal.level} ws={autoPopModal.ws}
               classWS={autoPopModal.classWS} homeworkWS={autoPopModal.homeworkWS}
               monthStr={monthStr} monthLabel={monthLabel} plans={plans}
-              onFill={(sl:string,sw:number,cws:number,hws:number)=>autoPopulate(apStudent,autoPopModal.sub,sl,sw,cws,hws)}
+              onFill={(sl:string,sw:number,cws:number,hws:number)=>autoPopulate(active.find((x:any)=>x.id===autoPopModal.studentId),autoPopModal.sub,sl,sw,cws,hws)}
               onClose={()=>setAutoPopModal(null)}
             />
           </div>
         </div>
-        )
-      })()}
+      )}
     </div>
   )
 }
