@@ -702,6 +702,7 @@ export default function AdminPlanning() {
               overstayList={overstayList} notifOn={notifOn} onEnableNotifications={enableNotifications}
               monthSessions={monthSessions} setMonthSessions={setMonthSessions}
               setPlans={setPlans} showToast={showToast}
+              keywords={keywords} centerName={centerName}
             />
           )}
           {tab==="plan" && (
@@ -816,7 +817,7 @@ export default function AdminPlanning() {
 }
 
 // ─── Today Tab ───────────────────────────────────────────────────
-function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},setPlans,kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={},setMonthSessions,showToast}:any) {
+function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelectedDate,getSession,onOpen,goals,plans={},setPlans,kiosk={},allStudents=[],onSetup,overstayList=[],notifOn,onEnableNotifications,monthSessions={},setMonthSessions,showToast,keywords=[],centerName=""}:any) {
   const [viewMode,setViewMode] = useState("cards"); // "cards" | "table" | "record"
   const shiftDate=n=>{const d=new Date(selectedDate+"T12:00:00");d.setDate(d.getDate()+n);setSelectedDate(d.toISOString().split("T")[0]);};
   const homeworkOnly = allTodayStudents.filter(s => !classStudents.includes(s));
@@ -938,7 +939,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 // ─── Record Book View — Excel-style inline editing ───────────────
 // Columns: Date | Day | C/H | Level | No. | WS# | Time | AT | 1..10 scores | $ | Total $
 // Click any cell to edit directly. Tab moves across. Month auto-populate from start point.
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession,showToast}:any) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession,showToast,keywords=[],centerName=""}:any) {
   const todayRef = new Date()
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
@@ -1008,7 +1009,8 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
       if (e.count>0||e.scores.length>0) {
         const sessData = {done:e.count,scores:e.scores,circled:e.circled,
           timeMinutes:e.timeMin,fromLevel:e.level,fromWorksheet:e.startWs,
-          moneyTasks:e.tasks,kumonMoney:e.money}
+          moneyTasks:e.tasks,kumonMoney:e.money,
+          selectedKeywords:e.selectedKeywords||[],customComment:e.customComment||''}
         await onSaveSession(s.id, dateStr, sub, sessData)
       }
       setEditCell(null)
