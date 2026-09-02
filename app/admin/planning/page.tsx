@@ -1001,9 +1001,10 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
     if (!e.count && !e.isAT) return // nothing to save
     setSaving((p:any)=>({...p,[key]:true}))
     try {
-      const planRow = {id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
+      const planRow:any = {id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
         plan_date:dateStr,level:e.level,start_ws:e.startWs,ws_count:e.count||0,
-        note:e.isAT?"Achievement Test":(e.note||null),day_type:e.dayType,is_at:e.isAT}
+        note:e.isAT?"Achievement Test":(e.note||null),day_type:e.dayType}
+      if (e.isAT) planRow.is_at = true
       await onSavePlan([planRow])
       if (e.count>0||e.scores.length>0) {
         const sessData = {done:e.count,scores:e.scores,circled:e.circled,
@@ -1299,7 +1300,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
               s={autoPopModal.s} sub={autoPopModal.sub} color={autoPopModal.color}
               level={autoPopModal.level} ws={autoPopModal.ws}
               classWS={autoPopModal.classWS} homeworkWS={autoPopModal.homeworkWS}
-              monthStr={monthStr} plans={plans}
+              monthStr={monthStr} monthLabel={monthLabel} plans={plans}
               onFill={(sl:string,sw:number,cws:number,hws:number)=>autoPopulate(autoPopModal.s,autoPopModal.sub,sl,sw,cws,hws)}
               onClose={()=>setAutoPopModal(null)}
             />
@@ -1310,7 +1311,7 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
   )
 }
 
-function AutoFillForm({s,sub,color,level,ws,classWS,homeworkWS,monthStr,plans,onFill,onClose}:any) {
+function AutoFillForm({s,sub,color,level,ws,classWS,homeworkWS,monthStr,monthLabel,plans,onFill,onClose}:any) {
   const seq = levelsFor(sub)
   // Find the last plan to continue from
   const lastPlan:any = Object.values(plans)
