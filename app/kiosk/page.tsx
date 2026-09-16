@@ -65,6 +65,8 @@ function getLocalDateStr() {
 
 export default function KioskPage() {
   const [sessions, setSessions] = useState<SessionWithStudent[]>([])
+  const [allStudents, setAllStudents] = useState<any[]>([])
+  const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [recentAction, setRecentAction] = useState<{ name: string; action: string } | null>(null)
@@ -85,33 +87,104 @@ export default function KioskPage() {
   }, [recentAction])
 
   async function load() {
-    // FIX 1: Use local date string so 5pm Friday stays Friday
     const today = getLocalDateStr()
 
-    const { data } = await supabase
+    // Load today's booked sessions for check-in state
+    const { data: sessionData } = await supabase
       .from('sessions')
       .select(`
         id, start_time, end_time, status, checked_in_at, checked_out_at,
         student:students(id, first_name, last_name, category)
       `)
       .eq('session_date', today)
-      .in('status', ['scheduled', 'makeup'])
+      .in('status', ['scheduled', 'makeup', 'completed'])
       .order('start_time', { ascending: true })
 
-    // FIX 2: Deduplicate by student id — keep one session per student
-    // (two-subject students create two booking rows; show them once on the kiosk)
+    // Build session map by booking student id
+    const sessionByBookingId: Record<string, any> = {}
     const seen = new Set<string>()
-    const deduped = (data || []).filter((s: any) => {
+    for (const s of (sessionData || [])) {
       const sid = s.student?.id
-      if (!sid || seen.has(sid)) return false
+      if (!sid || seen.has(sid)) continue
       seen.add(sid)
+      sessionByBookingId[sid] = s
+    }
+
+    // Load ALL active kumon students for display
+    const { data: kumonData } = await supabase
+      .from('kumon_students')
+      .select('id, kumon_student_id, name, status, parent_contact')
+      .eq('status', 'active')
+      .order('name', { ascending: true })
+
+    // Deduplicate kumon students by kumon_student_id (one per student, not per subject)
+    const seenKid = new Set<any>()
+    const allStudents = (kumonData || []).filter((k: any) => {
+      if (!k.kumon_student_id || seenKid.has(k.kumon_student_id)) return false
+      seenKid.add(k.kumon_student_id)
       return true
     })
 
-    // FIX 3: Never remove students for being late — keep ALL today's sessions
-    // regardless of start_time so late arrivals can still check in
-    setSessions(deduped as any)
+    // Merge: find booking session for each kumon student via kumon_student_id bridge
+    const { data: bookingStudents } = await supabase
+      .from('students')
+      .select('id, kumon_student_id')
+      .not('kumon_student_id', 'is', null)
+
+    const bookingIdByKid: Record<string, string> = {}
+    for (const b of (bookingStudents || [])) {
+      if (b.kumon_student_id) bookingIdByKid[String(b.kumon_student_id)] = b.id
+    }
+
+    // Build unified student list
+    const unified = allStudents.map((k: any) => {
+      const bookingId = bookingIdByKid[String(k.kumon_student_id)]
+      const session = bookingId ? sessionByBookingId[bookingId] : null
+      const [firstName, ...rest] = (k.name || '').split(' ')
+      return {
+        kumonId: k.id,
+        kumonStudentId: k.kumon_student_id,
+        bookingStudentId: bookingId || null,
+        firstName,
+        lastName: rest.join(' '),
+        sessionId: session?.id || null,
+        checkedInAt: session?.checked_in_at || null,
+        checkedOutAt: session?.checked_out_at || null,
+        startTime: session?.start_time || null,
+        endTime: session?.end_time || null,
+        isBooked: !!session,
+      }
+    })
+
+    setAllStudents(unified)
     setLoading(false)
+  }
+
+  async function walkInCheckIn(kumonStudentId: string, bookingStudentId: string | null, studentName: string) {
+    setActionLoading(kumonStudentId)
+    const now = new Date().toISOString()
+    const today = getLocalDateStr()
+    if (bookingStudentId) {
+      // Create an ad-hoc session in the booking portal
+      const { data: newSess } = await supabase.from('sessions').insert({
+        student_id: bookingStudentId,
+        session_date: today,
+        start_time: new Date().toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:false}),
+        end_time: '19:00',
+        status: 'makeup',
+        checked_in_at: now,
+      }).select().single()
+      setAllStudents(prev => prev.map(s =>
+        s.kumonId === kumonStudentId ? { ...s, sessionId: newSess?.id, checkedInAt: now, isBooked: true } : s
+      ))
+    } else {
+      // Just mark checked in locally (no booking record exists)
+      setAllStudents(prev => prev.map(s =>
+        s.kumonId === kumonStudentId ? { ...s, checkedInAt: now } : s
+      ))
+    }
+    setRecentAction({ name: studentName, action: 'checked in' })
+    setActionLoading(null)
   }
 
   async function checkIn(sessionId: string, studentName: string) {
@@ -124,6 +197,19 @@ export default function KioskPage() {
       s.id === sessionId ? { ...s, checked_in_at: now } : s
     ))
     setRecentAction({ name: studentName, action: 'checked in' })
+    setActionLoading(null)
+  }
+
+  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string) {
+    setActionLoading(kumonStudentId)
+    const now = new Date().toISOString()
+    if (sessionId) {
+      await supabase.from('sessions').update({ checked_out_at: now }).eq('id', sessionId)
+    }
+    setAllStudents(prev => prev.map(s =>
+      s.kumonId === kumonStudentId ? { ...s, checkedOutAt: now } : s
+    ))
+    setRecentAction({ name: studentName, action: 'checked out' })
     setActionLoading(null)
   }
 
@@ -140,15 +226,19 @@ export default function KioskPage() {
     setActionLoading(null)
   }
 
-  const checkedIn = sessions.filter(s => s.checked_in_at && !s.checked_out_at)
-  const notArrived = sessions.filter(s => !s.checked_in_at)
-  const checkedOut = sessions.filter(s => s.checked_out_at)
+  // Derived lists from allStudents
+  const filtered = allStudents.filter(s =>
+    !search || (s.firstName + ' ' + s.lastName).toLowerCase().includes(search.toLowerCase())
+  )
+  const checkedIn = filtered.filter(s => s.checkedInAt && !s.checkedOutAt)
+  const notArrived = filtered.filter(s => !s.checkedInAt)
+  const checkedOut = filtered.filter(s => s.checkedOutAt)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0D1B2A] to-[#0077B6] flex flex-col">
 
       {/* Header */}
-      <div className="px-8 pt-8 pb-6 flex items-center justify-between">
+      <div className="px-8 pt-8 pb-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <img src="/kumon-logo.png" alt="Kumon" className="h-12 rounded-lg" />
           <div>
@@ -157,6 +247,20 @@ export default function KioskPage() {
           </div>
         </div>
         <Clock />
+      </div>
+
+      {/* Search */}
+      <div className="px-8 pb-4">
+        <input
+          type="text"
+          placeholder="🔍 Search student name..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full max-w-md px-4 py-2 rounded-xl bg-white/10 text-white placeholder-white/40 border border-white/20 outline-none focus:bg-white/20 text-sm"
+        />
+        <span className="text-white/40 text-xs ml-4">
+          {filtered.length} students · {checkedIn.length} in center
+        </span>
       </div>
 
       {/* Success toast */}
@@ -171,15 +275,7 @@ export default function KioskPage() {
       <div className="flex-1 px-8 pb-8 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="text-white/50 text-lg">Loading today's sessions…</div>
-          </div>
-        ) : sessions.length === 0 ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="text-6xl mb-4">📚</div>
-              <div className="text-white text-2xl font-semibold">No sessions today</div>
-              <div className="text-white/50 mt-2">Check back on your next session day</div>
-            </div>
+            <div className="text-white/50 text-lg">Loading students…</div>
           </div>
         ) : (
           <div className="space-y-6">
@@ -189,27 +285,30 @@ export default function KioskPage() {
               <div>
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse"/>
-                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">Currently Present ({checkedIn.length})</h2>
+                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">
+                    In Center ({checkedIn.length})
+                  </h2>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {checkedIn.map(sess => (
-                    <div key={sess.id} className="bg-blue-500/20 border border-blue-400/40 rounded-2xl p-4 flex flex-col items-center gap-3">
+                  {checkedIn.map(s => (
+                    <div key={s.kumonId} className="bg-blue-500/20 border border-blue-400/40 rounded-2xl p-4 flex flex-col items-center gap-3">
                       <div className="w-14 h-14 rounded-full bg-blue-400/30 flex items-center justify-center text-2xl font-bold text-white">
-                        {(sess.student as any)?.first_name?.[0]}{(sess.student as any)?.last_name?.[0]}
+                        {s.firstName?.[0]}{s.lastName?.[0]}
                       </div>
                       <div className="text-center">
-                        <div className="text-white font-semibold text-sm">{(sess.student as any)?.first_name}</div>
-                        <div className="text-white/60 text-xs">{(sess.student as any)?.last_name}</div>
+                        <div className="text-white font-semibold text-sm">{s.firstName}</div>
+                        <div className="text-white/60 text-xs">{s.lastName}</div>
+                        {!s.isBooked && <div className="text-yellow-300 text-xs mt-1">Walk-in</div>}
                       </div>
-                      <LiveTimer checkedInAt={sess.checked_in_at!} />
+                      <LiveTimer checkedInAt={s.checkedInAt} />
                       <div className="text-white/40 text-xs">
-                        In: {new Date(sess.checked_in_at!).toLocaleTimeString('en-CA', { hour:'2-digit', minute:'2-digit', hour12:true })}
+                        In: {new Date(s.checkedInAt).toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:true})}
                       </div>
                       <button
-                        onClick={() => checkOut(sess.id, `${(sess.student as any)?.first_name}`)}
-                        disabled={actionLoading === sess.id}
+                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName)}
+                        disabled={actionLoading === s.kumonId}
                         className="w-full py-3 rounded-xl bg-white text-[#0077B6] font-bold text-sm hover:bg-blue-50 active:scale-95 transition-all disabled:opacity-50">
-                        {actionLoading === sess.id ? '…' : '🚪 Check Out'}
+                        {actionLoading === s.kumonId ? '…' : '🚪 Check Out'}
                       </button>
                     </div>
                   ))}
@@ -217,31 +316,35 @@ export default function KioskPage() {
               </div>
             )}
 
-            {/* Not Yet Arrived — always shown, never filtered by time */}
+            {/* Not Yet Arrived — ALL active students */}
             {notArrived.length > 0 && (
               <div>
                 <div className="flex items-center gap-3 mb-3">
                   <div className="w-3 h-3 rounded-full bg-slate-400"/>
-                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">Expected Today ({notArrived.length})</h2>
+                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">
+                    All Students ({notArrived.length})
+                  </h2>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {notArrived.map(sess => (
-                    <div key={sess.id} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col items-center gap-3 hover:bg-white/10 transition-colors">
+                  {notArrived.map(s => (
+                    <div key={s.kumonId} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col items-center gap-3 hover:bg-white/10 transition-colors">
                       <div className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center text-2xl font-bold text-white/70">
-                        {(sess.student as any)?.first_name?.[0]}{(sess.student as any)?.last_name?.[0]}
+                        {s.firstName?.[0]}{s.lastName?.[0]}
                       </div>
                       <div className="text-center">
-                        <div className="text-white font-semibold text-sm">{(sess.student as any)?.first_name}</div>
-                        <div className="text-white/50 text-xs">{(sess.student as any)?.last_name}</div>
-                      </div>
-                      <div className="text-white/40 text-xs">
-                        {formatTime(sess.start_time)} – {formatTime(sess.end_time)}
+                        <div className="text-white font-semibold text-sm">{s.firstName}</div>
+                        <div className="text-white/50 text-xs">{s.lastName}</div>
+                        {s.startTime && (
+                          <div className="text-white/30 text-xs mt-1">
+                            Booked {s.startTime}
+                          </div>
+                        )}
                       </div>
                       <button
-                        onClick={() => checkIn(sess.id, `${(sess.student as any)?.first_name}`)}
-                        disabled={actionLoading === sess.id}
+                        onClick={() => walkInCheckIn(s.kumonId, s.bookingStudentId, s.firstName)}
+                        disabled={actionLoading === s.kumonId}
                         className="w-full py-3 rounded-xl bg-[#009FE3] text-white font-bold text-sm hover:bg-[#0077B6] active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-blue-500/30">
-                        {actionLoading === sess.id ? '…' : '✅ Check In'}
+                        {actionLoading === s.kumonId ? '…' : '✅ Check In'}
                       </button>
                     </div>
                   ))}
@@ -257,22 +360,28 @@ export default function KioskPage() {
                   <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">Done for Today ({checkedOut.length})</h2>
                 </div>
                 <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                  {checkedOut.map(sess => {
-                    const mins = sess.checked_in_at && sess.checked_out_at
-                      ? Math.round((new Date(sess.checked_out_at).getTime() - new Date(sess.checked_in_at).getTime()) / 60000)
+                  {checkedOut.map(s => {
+                    const mins = s.checkedInAt && s.checkedOutAt
+                      ? Math.round((new Date(s.checkedOutAt).getTime() - new Date(s.checkedInAt).getTime()) / 60000)
                       : null
                     return (
-                      <div key={sess.id} className="bg-green-500/10 border border-green-400/20 rounded-xl p-3 flex flex-col items-center gap-1 opacity-60">
+                      <div key={s.kumonId} className="bg-green-500/10 border border-green-400/20 rounded-xl p-3 flex flex-col items-center gap-1 opacity-60">
                         <div className="w-10 h-10 rounded-full bg-green-400/20 flex items-center justify-center text-lg font-bold text-green-300">
-                          {(sess.student as any)?.first_name?.[0]}{(sess.student as any)?.last_name?.[0]}
+                          {s.firstName?.[0]}{s.lastName?.[0]}
                         </div>
-                        <div className="text-green-300 text-xs font-medium">{(sess.student as any)?.first_name}</div>
+                        <div className="text-green-300 text-xs font-medium">{s.firstName}</div>
                         {mins && <div className="text-green-400/60 text-[10px]">{mins} min</div>}
                         <div className="text-green-400/40 text-[10px]">✅ Done</div>
                       </div>
                     )
                   })}
                 </div>
+              </div>
+            )}
+
+            {filtered.length === 0 && (
+              <div className="flex items-center justify-center h-64">
+                <div className="text-white/40 text-lg">No students found</div>
               </div>
             )}
           </div>
@@ -282,7 +391,7 @@ export default function KioskPage() {
       {/* Footer */}
       <div className="px-8 py-4 border-t border-white/10 flex items-center justify-between">
         <div className="text-white/30 text-xs">Kumon Brookswood · 4043 200 St, Langley BC</div>
-        <div className="text-white/30 text-xs">{sessions.length} sessions today · Auto-refreshes every 30s</div>
+        <div className="text-white/30 text-xs">{allStudents.length} active students · Auto-refreshes every 30s</div>
       </div>
     </div>
   )

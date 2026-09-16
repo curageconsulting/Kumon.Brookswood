@@ -1749,97 +1749,237 @@ function SubjectSection({subject,emoji,color,level,worksheet,data,onUpdate,dayTy
 
 // ─── Projection Modal — port of the Goal Setting & Communication Tool ──
 function ProjectionModal({student,subject,onSetGoal,onClose,showToast}) {
-  const isMath = subject === "math";
-  const curLevel = isMath ? student.mathLevel : student.readingLevel;
-  const curWs = isMath ? student.mathWorksheet : student.readingWorksheet;
-  const color = isMath ? "#3b82f6" : "#ec4899";
-  const settingKey = `projection_${student.id}_${subject}`;
-  const [wsPerDay,setWsPerDay] = useState(5);
-  const [daysPerWeek,setDaysPerWeek] = useState(7);
-  const [reps,setReps] = useState({});
-  const [loaded,setLoaded] = useState(false);
-  useEffect(()=>{ (async()=>{
-    try { const p = await fetchSetting(settingKey, null);
-      if (p) { setWsPerDay(p.wsPerDay||5); setDaysPerWeek(p.daysPerWeek||7); setReps(p.reps||{}); } }
-    catch(e){ console.warn(e); }
-    setLoaded(true);
-  })(); },[]);
-  const baseGrade = parseGrade(student.grade);
-  const rows = buildProjection(subject, curLevel, curWs, wsPerDay, daysPerWeek, reps, baseGrade);
-  const fmtD = d => d.toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"2-digit"});
-  const cycleReps = lvl => setReps(p=>({...p,[lvl]: ((p[lvl]??1) % 3) + 1 }));
-  const save = async()=>{ try{ await saveSetting(settingKey,{wsPerDay,daysPerWeek,reps}); showToast("📈 Projection saved!"); }catch(e){ showToast("Save failed: "+e.message,"error"); } };
-  const Counter = ({v,set,min,max,label}) => (
-    <div style={{flex:1,background:"#f8fafc",borderRadius:10,padding:"8px 10px"}}>
-      <div style={{fontSize:10,fontWeight:700,color:"#475569",marginBottom:5}}>{label}</div>
-      <div style={{display:"flex",alignItems:"center",gap:8}}>
-        <CounterBtn size={28} onClick={()=>set(Math.max(min,v-1))}>−</CounterBtn>
-        <span style={{flex:1,textAlign:"center",fontWeight:900,fontSize:18,color:"#1e293b"}}>{v}</span>
-        <CounterBtn size={28} onClick={()=>set(Math.min(max,v+1))}>+</CounterBtn>
-      </div>
-    </div>
-  );
+  const isMath = subject==="math"
+  const curLevel = isMath?student.mathLevel:student.readingLevel
+  const curWs = isMath?student.mathWorksheet:student.readingWorksheet
+  const color = isMath?"#3b82f6":"#ec4899"
+  const settingKey = `projection_${student.id}_${subject}`
+  const seq = levelsFor(subject)
+  const baseGrade = parseGrade(student.grade)
+
+  // Per-level settings: wsPerDay and reps (editable inline like the xlsm)
+  const [globalWsPerDay,setGlobalWsPerDay] = useState(isMath?(student.mathClassWS||5):(student.readingClassWS||5))
+  const [daysPerWeek,setDaysPerWeek] = useState(7)
+  const [levelSettings,setLevelSettings] = useState<any>({}) // {level: {wsPerDay, reps}}
+  const [loaded,setLoaded] = useState(false)
+
+  useEffect(()=>{(async()=>{
+    try {
+      const p = await fetchSetting(settingKey, null)
+      if (p) {
+        setGlobalWsPerDay(p.globalWsPerDay||globalWsPerDay)
+        setDaysPerWeek(p.daysPerWeek||7)
+        setLevelSettings(p.levelSettings||{})
+      }
+    } catch(e){}
+    setLoaded(true)
+  })();},[])
+
+  const getLvlSetting = (lvl:string) => ({
+    wsPerDay: levelSettings[lvl]?.wsPerDay ?? globalWsPerDay,
+    reps: levelSettings[lvl]?.reps ?? 1,
+  })
+
+  const setLvlSetting = (lvl:string, patch:any) => {
+    setLevelSettings((p:any)=>({...p,[lvl]:{...getLvlSetting(lvl),...patch}}))
+  }
+
+  // Build full projection table (all remaining levels)
+  const curIdx = seq.indexOf(curLevel)
+  const projRows:any[] = []
+  let cumCalDays = 0
+  const today = new Date()
+
+  for (let i = curIdx; i < seq.length && projRows.length < 20; i++) {
+    const lvl = seq[i]
+    const {wsPerDay, reps} = getLvlSetting(lvl)
+    const wsInLevel = i===curIdx ? (200 - curWs + 1) : 200
+    const totalWs = wsInLevel * reps
+    const studyDays = Math.ceil(totalWs / wsPerDay)
+    // Calendar days (studyDays spread over daysPerWeek)
+    const fullWeeks = Math.floor(studyDays / daysPerWeek)
+    const remainDays = studyDays % daysPerWeek
+    const calDays = remainDays===0
+      ? (fullWeeks===0?0:(fullWeeks-1)*7+daysPerWeek)
+      : fullWeeks*7+remainDays
+    cumCalDays += calDays
+
+    const finishDate = new Date(today.getTime() + cumCalDays*86400000)
+    // Grade at completion (September school advance)
+    const finishMonth = finishDate.getMonth() // 0=Jan
+    const finishYear = finishDate.getFullYear()
+    const gradeYear = finishMonth >= 8 ? finishYear : finishYear - 1
+    const yearsAhead = gradeYear - (today.getMonth()>=8?today.getFullYear():today.getFullYear()-1)
+    const gradeAtFinish = baseGrade!=null ? gradeAdvance(baseGrade, yearsAhead) : null
+    const milestone = gradeAtFinish!=null ? milestoneFor(subject, gradeAtFinish, lvl) : null
+
+    projRows.push({lvl,wsInLevel,totalWs,reps,wsPerDay,studyDays,calDays,cumCalDays,finishDate,gradeAtFinish,milestone,i})
+  }
+
+  const save = async()=>{
+    try {
+      await saveSetting(settingKey,{globalWsPerDay,daysPerWeek,levelSettings})
+      showToast("📈 Projection saved!")
+    } catch(e:any){ showToast("Save failed: "+e.message,"error") }
+  }
+
+  const fmtD = (d:Date) => d.toLocaleDateString("en-CA",{month:"short",day:"numeric",year:"2-digit"})
+
+  const CellInput = ({value,onChange,width=40}:any) => (
+    <input type="number" inputMode="numeric" value={value} min={1} max={30}
+      onChange={e=>onChange(Math.max(1,Math.min(30,parseInt(e.target.value)||1)))}
+      style={{width,border:"1.5px solid #bfdbfe",borderRadius:6,padding:"3px 4px",
+        fontSize:11,fontWeight:700,textAlign:"center",outline:"none",background:"white"}}/>
+  )
+
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:500,display:"flex",alignItems:"flex-end"}} onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{width:"100%",maxWidth:700,margin:"0 auto",background:"white",borderRadius:"20px 20px 0 0",maxHeight:"92vh",overflowY:"auto",paddingBottom:28}}>
-        <div style={{padding:"12px 16px",position:"sticky",top:0,background:"white",zIndex:10,borderBottom:"1px solid #f1f5f9",borderRadius:"20px 20px 0 0"}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:500,display:"flex",alignItems:"flex-end"}}
+      onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div style={{width:"100%",maxWidth:760,margin:"0 auto",background:"white",
+        borderRadius:"20px 20px 0 0",maxHeight:"94vh",display:"flex",flexDirection:"column"}}>
+
+        {/* Sticky header */}
+        <div style={{padding:"12px 16px",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
           <div style={{width:40,height:4,background:"#e2e8f0",borderRadius:2,margin:"0 auto 10px"}}/>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div>
-              <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>📈 {isMath?"Math":"Reading"} Projection</div>
-              <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{student.name} · from <b style={{color}}>{curLevel}{curWs}</b>{baseGrade!=null&&<> · Grade {baseGrade}</>}</div>
+              <div style={{fontWeight:800,fontSize:16,color:"#1e293b"}}>
+                📈 {isMath?"Math":"Reading"} Goal Setting Tool
+              </div>
+              <div style={{fontSize:12,color:"#64748b",marginTop:2}}>
+                {student.name} · from <b style={{color}}>{curLevel} {curWs}</b>
+                {baseGrade!=null&&<> · Grade {baseGrade}</>}
+                · {student.grade}
+              </div>
             </div>
-            <button onClick={onClose} style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:16}}>✕</button>
+            <button onClick={onClose}
+              style={{border:"none",background:"#f1f5f9",borderRadius:"50%",width:34,height:34,cursor:"pointer",fontSize:16}}>✕</button>
           </div>
         </div>
-        <div style={{padding:16}}>
-          <div style={{display:"flex",gap:8,marginBottom:12}}>
-            <Counter v={wsPerDay} set={setWsPerDay} min={1} max={30} label="WORKSHEETS / DAY"/>
-            <Counter v={daysPerWeek} set={setDaysPerWeek} min={1} max={7} label="STUDY DAYS / WEEK"/>
+
+        {/* Global controls */}
+        <div style={{padding:"10px 16px",borderBottom:"1px solid #f1f5f9",flexShrink:0}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,background:"#f8fafc",borderRadius:8,padding:"6px 10px"}}>
+              <span style={{fontSize:10,fontWeight:700,color:"#475569"}}>WS/DAY (default)</span>
+              <CounterBtn size={24} onClick={()=>setGlobalWsPerDay((v:number)=>Math.max(1,v-1))}>−</CounterBtn>
+              <span style={{fontWeight:900,fontSize:16,minWidth:24,textAlign:"center"}}>{globalWsPerDay}</span>
+              <CounterBtn size={24} onClick={()=>setGlobalWsPerDay((v:number)=>Math.min(30,v+1))}>+</CounterBtn>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6,background:"#f8fafc",borderRadius:8,padding:"6px 10px"}}>
+              <span style={{fontSize:10,fontWeight:700,color:"#475569"}}>DAYS/WEEK</span>
+              <CounterBtn size={24} onClick={()=>setDaysPerWeek((v:number)=>Math.max(1,v-1))}>−</CounterBtn>
+              <span style={{fontWeight:900,fontSize:16,minWidth:24,textAlign:"center"}}>{daysPerWeek}</span>
+              <CounterBtn size={24} onClick={()=>setDaysPerWeek((v:number)=>Math.min(7,v+1))}>+</CounterBtn>
+            </div>
+            <div style={{fontSize:10,color:"#94a3b8",flex:1}}>
+              Edit WS/Day or Reps per level in the table below
+            </div>
           </div>
-          <div style={{fontSize:10,color:"#94a3b8",marginBottom:10}}>Tap a Reps value to cycle 1→2→3 (how many times the level is repeated). Tap 🎯 to set that level's completion as the goal.</div>
-          {!loaded ? <div style={{textAlign:"center",padding:30,color:"#94a3b8"}}>Loading…</div> : (
-          <div style={{background:"white",border:"1px solid #e2e8f0",borderRadius:12,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead><tr style={{background:"#1e3a8a",color:"white"}}>
-                <th style={{padding:"7px 8px",textAlign:"left"}}>Level</th>
-                <th style={{padding:"7px 6px"}}>WS</th>
-                <th style={{padding:"7px 6px"}}>Reps</th>
-                <th style={{padding:"7px 6px"}}>Days</th>
-                <th style={{padding:"7px 8px",textAlign:"left"}}>Finish</th>
-                <th style={{padding:"7px 6px"}}>Honor</th>
-                <th style={{padding:"7px 4px"}}></th>
-              </tr></thead>
+        </div>
+
+        {/* Projection table */}
+        <div style={{flex:1,overflowY:"auto",padding:"0 0 4px"}}>
+          {!loaded?(
+            <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>Loading…</div>
+          ):(
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+              <thead style={{position:"sticky",top:0,zIndex:5}}>
+                <tr style={{background:"#1e3a8a",color:"white"}}>
+                  <th style={{padding:"8px 10px",textAlign:"left",fontWeight:700}}>Level</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>WS in Level</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Reps</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>WS/Day</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Study Days</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Cal Days</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Cum Days</th>
+                  <th style={{padding:"8px 8px",textAlign:"left",fontWeight:700}}>Finish Date</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Grade</th>
+                  <th style={{padding:"8px 6px",textAlign:"center",fontWeight:700}}>Honor</th>
+                  <th style={{padding:"8px 4px",textAlign:"center",fontWeight:700}}>🎯</th>
+                </tr>
+              </thead>
               <tbody>
-                {rows.map((row,idx)=>(
-                  <tr key={row.level} style={{borderBottom:"1px solid #f1f5f9",background:idx===0?color+"0a":"white"}}>
-                    <td style={{padding:"7px 8px",fontWeight:800,color}}>{row.level}</td>
-                    <td style={{padding:"7px 6px",textAlign:"center",color:"#64748b"}}>{row.wsCount}</td>
-                    <td onClick={()=>cycleReps(row.level)} style={{padding:"7px 6px",textAlign:"center",cursor:"pointer",fontWeight:800,color:row.reps>1?"#ea580c":"#94a3b8",background:row.reps>1?"#fff7ed":"transparent"}}>×{row.reps}</td>
-                    <td style={{padding:"7px 6px",textAlign:"center",color:"#64748b"}} title={`${row.studyDays} study days`}>{row.cum}</td>
-                    <td style={{padding:"7px 8px",fontWeight:700,color:"#1e293b",whiteSpace:"nowrap"}}>{fmtD(row.finish)} <span style={{fontSize:9,color:"#94a3b8"}}>Gr {row.grade}</span></td>
-                    <td style={{padding:"7px 6px",textAlign:"center"}}>{row.milestone && <span title={`${row.milestone.label} — ${row.milestone.ahead} level(s) ahead of grade`} style={{fontSize:13}}>{row.milestone.medal}</span>}</td>
-                    <td style={{padding:"7px 4px",textAlign:"center"}}>
-                      <button onClick={()=>onSetGoal({
-                          id:`g_${student.id}_${subject}`, student_id:student.id, subject,
-                          target_level:row.level, target_worksheet:200,
-                          target_date:row.finish.toISOString().split("T")[0],
-                          start_level:curLevel, start_worksheet:curWs, status:'active'
-                        })} style={{border:"none",background:"transparent",cursor:"pointer",fontSize:13}} title="Set as goal">🎯</button>
-                    </td>
-                  </tr>
-                ))}
+                {projRows.map((row,idx)=>{
+                  const isFirst = idx===0
+                  const lvlSet = getLvlSetting(row.lvl)
+                  const medal = row.milestone
+                  const rowBg = isFirst?color+"0a":medal?.label==="ASHR3"?"#faf5ff":medal?.label==="ASHR2"?"#fffbeb":medal?.label==="ASHR1"?"#f0fdf4":"white"
+                  return (
+                    <tr key={row.lvl} style={{borderBottom:"1px solid #f1f5f9",background:rowBg}}>
+                      {/* Level */}
+                      <td style={{padding:"6px 10px",fontWeight:800,color,fontSize:13}}>{row.lvl}</td>
+                      {/* WS in level */}
+                      <td style={{padding:"6px 6px",textAlign:"center",color:"#64748b"}}>{row.wsInLevel}</td>
+                      {/* Reps — editable */}
+                      <td style={{padding:"4px 4px",textAlign:"center"}}>
+                        <CellInput value={lvlSet.reps} width={38}
+                          onChange={(v:number)=>setLvlSetting(row.lvl,{reps:v})}/>
+                      </td>
+                      {/* WS/Day — editable */}
+                      <td style={{padding:"4px 4px",textAlign:"center"}}>
+                        <CellInput value={lvlSet.wsPerDay} width={38}
+                          onChange={(v:number)=>setLvlSetting(row.lvl,{wsPerDay:v})}/>
+                      </td>
+                      {/* Study days */}
+                      <td style={{padding:"6px 6px",textAlign:"center",color:"#64748b"}}>{row.studyDays}</td>
+                      {/* Cal days */}
+                      <td style={{padding:"6px 6px",textAlign:"center",color:"#64748b"}}>{row.calDays}</td>
+                      {/* Cumulative days */}
+                      <td style={{padding:"6px 6px",textAlign:"center",fontWeight:700,color:"#475569"}}>{row.cumCalDays}</td>
+                      {/* Finish date */}
+                      <td style={{padding:"6px 8px",fontWeight:700,color:"#1e293b",whiteSpace:"nowrap"}}>
+                        {fmtD(row.finishDate)}
+                      </td>
+                      {/* Grade */}
+                      <td style={{padding:"6px 6px",textAlign:"center",color:"#64748b",fontWeight:600}}>
+                        {row.gradeAtFinish!=null?row.gradeAtFinish:"—"}
+                      </td>
+                      {/* Honor roll */}
+                      <td style={{padding:"6px 6px",textAlign:"center"}}>
+                        {medal&&<span title={medal.label} style={{fontSize:14}}>{medal.medal}</span>}
+                      </td>
+                      {/* Set as goal */}
+                      <td style={{padding:"6px 4px",textAlign:"center"}}>
+                        <button onClick={()=>onSetGoal({
+                            id:`g_${student.id}_${subject}`,student_id:student.id,subject,
+                            target_level:row.lvl,target_worksheet:200,
+                            target_date:row.finishDate.toISOString().split("T")[0],
+                            start_level:curLevel,start_worksheet:curWs,status:"active"
+                          })}
+                          style={{border:"none",background:"transparent",cursor:"pointer",fontSize:14}}
+                          title="Set as 1-year goal">🎯</button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
-          </div>)}
-          <div style={{display:"flex",gap:4,flexWrap:"wrap",margin:"10px 0 14px",fontSize:10,color:"#64748b"}}>
-            {MILESTONE_BANDS.slice().reverse().map(b=><span key={b.label} style={{background:"#f8fafc",borderRadius:6,padding:"3px 8px"}}>{b.medal} {b.label} = {b.ahead===0?"on grade standard":`${b.ahead} ahead`}</span>)}
+          )}
+        </div>
+
+        {/* Legend + actions */}
+        <div style={{padding:"10px 16px",borderTop:"1px solid #f1f5f9",flexShrink:0}}>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10,fontSize:10,color:"#64748b"}}>
+            <span style={{background:"#f5f3ff",borderRadius:6,padding:"2px 8px"}}>💎 Platinum = ASHR3 (3+ ahead)</span>
+            <span style={{background:"#fffbeb",borderRadius:6,padding:"2px 8px"}}>🥇 Gold = ASHR2 (2 ahead)</span>
+            <span style={{background:"#f0fdf4",borderRadius:6,padding:"2px 8px"}}>🥈 Silver = ASHR1 (1 ahead)</span>
+            <span style={{background:"#f8fafc",borderRadius:6,padding:"2px 8px"}}>🥉 Bronze = KIS (on standard)</span>
           </div>
-          <button onClick={save} style={{width:"100%",padding:"13px",border:"none",background:"linear-gradient(135deg,#1e40af,#5b21b6)",color:"white",borderRadius:10,fontWeight:700,fontSize:14,cursor:"pointer"}}>💾 Save Projection Settings</button>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={onClose}
+              style={{padding:"11px 18px",border:"1.5px solid #e2e8f0",background:"white",color:"#64748b",borderRadius:10,fontWeight:700,cursor:"pointer"}}>
+              Close
+            </button>
+            <button onClick={save}
+              style={{flex:1,padding:"11px",border:"none",background:"linear-gradient(135deg,#1e40af,#5b21b6)",color:"white",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer"}}>
+              💾 Save Settings
+            </button>
+          </div>
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 
