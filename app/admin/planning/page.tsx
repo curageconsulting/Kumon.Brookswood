@@ -957,6 +957,34 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
     onMonthChange&&onMonthChange(d.getFullYear(),d.getMonth())
   }
 
+  const autoPopulate = async(s:any,sub:string,startLevel:string,startWs:number,classWS:number,homeworkWS:number) => {
+    const rows:any[] = []
+    let curLevel=startLevel, curWs=startWs
+    const classDays:string[] = Array.isArray(sub==="math"?s.mathScheduleDays:s.readingScheduleDays)?(sub==="math"?s.mathScheduleDays:s.readingScheduleDays):[]
+    const hwDays:string[] = Array.isArray(sub==="math"?s.mathHomeworkDays:s.readingHomeworkDays)?(sub==="math"?s.mathHomeworkDays:s.readingHomeworkDays):[]
+    const allDays = classDays.length===0&&hwDays.length===0
+    for (let di=0;di<daysInMonth;di++) {
+      const dayNum=di+1
+      const dateStr=`${monthStr}-${String(dayNum).padStart(2,"0")}`
+      const dow=new Date(dateStr+"T12:00:00").getDay()
+      const dayLabel=DAY_NAMES[dow]
+      const isClassDay=classDays.includes(dayLabel)
+      const isHwDay=allDays||hwDays.includes(dayLabel)
+      if (!isClassDay&&!isHwDay) continue
+      const wsCount=isClassDay?classWS:homeworkWS
+      if (wsCount<=0) continue
+      rows.push({id:`p_${s.id}_${sub}_${dateStr}`,student_id:s.id,subject:sub,
+        plan_date:dateStr,level:curLevel,start_ws:curWs,ws_count:wsCount,
+        day_type:isClassDay?"C":"H",note:null})
+      try { const nxt=advancePos(curLevel,curWs,wsCount,sub); curLevel=nxt.level; curWs=nxt.worksheet; } catch(e){ break }
+    }
+    if (rows.length===0) { setAutoPopModal(null); return; }
+    try {
+      await onSavePlan(rows)
+    } catch(e:any){ alert("Auto-fill failed: "+(e?.message||String(e))) }
+    setAutoPopModal(null)
+  }
+
   const getRowEdit = (s:any,sub:string,dateStr:string,plan:any,sd:any) => {
     const key = s.id+"|"+sub+"|"+dateStr
     if (rowEdits[key]) return rowEdits[key]
