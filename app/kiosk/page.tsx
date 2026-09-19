@@ -97,7 +97,6 @@ export default function KioskPage() {
         student:students(id, first_name, last_name, category)
       `)
       .eq('session_date', today)
-      .in('status', ['scheduled', 'makeup', 'completed'])
       .order('start_time', { ascending: true })
 
     // Build session map by booking student id
@@ -105,9 +104,22 @@ export default function KioskPage() {
     const seen = new Set<string>()
     for (const s of (sessionData || [])) {
       const sid = s.student?.id
-      if (!sid || seen.has(sid)) continue
+      if (!sid) continue
+      // Keep the one with check-in data if multiple
+      if (seen.has(sid) && !s.checked_in_at) continue
       seen.add(sid)
       sessionByBookingId[sid] = s
+    }
+
+    // Also fetch kumon_sessions for today to get check-in times
+    // (planning page records sessions here)
+    const { data: kumonSessions } = await supabase
+      .from('kumon_sessions')
+      .select('student_id, present, checked_in_at, checked_out_at')
+      .eq('session_date', today)
+    const kumonCheckinByStudentId: Record<string, any> = {}
+    for (const ks of (kumonSessions || [])) {
+      if (ks.student_id) kumonCheckinByStudentId[ks.student_id] = ks
     }
 
     // Load ALL active kumon students for display
@@ -148,8 +160,8 @@ export default function KioskPage() {
         firstName,
         lastName: rest.join(' '),
         sessionId: session?.id || null,
-        checkedInAt: session?.checked_in_at || null,
-        checkedOutAt: session?.checked_out_at || null,
+        checkedInAt: session?.checked_in_at || kumonCheckinByStudentId[k.id]?.checked_in_at || null,
+        checkedOutAt: session?.checked_out_at || kumonCheckinByStudentId[k.id]?.checked_out_at || null,
         startTime: session?.start_time || null,
         endTime: session?.end_time || null,
         isBooked: !!session,
@@ -164,8 +176,16 @@ export default function KioskPage() {
     setActionLoading(kumonStudentId)
     const now = new Date().toISOString()
     const today = getLocalDateStr()
+    // Always write to kumon_sessions so check-in persists across reloads
+    await supabase.from('kumon_sessions').upsert({
+      id: `kiosk_${kumonStudentId}_${today}`,
+      student_id: kumonStudentId,
+      session_date: today,
+      checked_in_at: now,
+      present: true,
+    }, { onConflict: 'id' })
+
     if (bookingStudentId) {
-      // Create an ad-hoc session in the booking portal
       const { data: newSess } = await supabase.from('sessions').insert({
         student_id: bookingStudentId,
         session_date: today,
@@ -178,7 +198,6 @@ export default function KioskPage() {
         s.kumonId === kumonStudentId ? { ...s, sessionId: newSess?.id, checkedInAt: now, isBooked: true } : s
       ))
     } else {
-      // Just mark checked in locally (no booking record exists)
       setAllStudents(prev => prev.map(s =>
         s.kumonId === kumonStudentId ? { ...s, checkedInAt: now } : s
       ))
@@ -206,6 +225,12 @@ export default function KioskPage() {
     if (sessionId) {
       await supabase.from('sessions').update({ checked_out_at: now }).eq('id', sessionId)
     }
+    await supabase.from('kumon_sessions').upsert({
+      id: `kiosk_${kumonStudentId}_${today}`,
+      student_id: kumonStudentId,
+      session_date: today,
+      checked_out_at: now,
+    }, { onConflict: 'id' })
     setAllStudents(prev => prev.map(s =>
       s.kumonId === kumonStudentId ? { ...s, checkedOutAt: now } : s
     ))
