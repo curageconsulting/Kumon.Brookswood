@@ -111,15 +111,14 @@ export default function KioskPage() {
       sessionByBookingId[sid] = s
     }
 
-    // Also fetch kumon_sessions for today to get check-in times
-    // (planning page records sessions here)
-    const { data: kumonSessions } = await supabase
-      .from('kumon_sessions')
-      .select('student_id, present, checked_in_at, checked_out_at')
-      .eq('session_date', today)
+    // Fetch kiosk check-in state for today (persists across refreshes)
+    const { data: kioskCheckins } = await supabase
+      .from('kiosk_checkins')
+      .select('student_id, checked_in_at, checked_out_at')
+      .eq('checkin_date', today)
     const kumonCheckinByStudentId: Record<string, any> = {}
-    for (const ks of (kumonSessions || [])) {
-      if (ks.student_id) kumonCheckinByStudentId[ks.student_id] = ks
+    for (const kc of (kioskCheckins || [])) {
+      if (kc.student_id) kumonCheckinByStudentId[kc.student_id] = kc
     }
 
     // Load ALL active kumon students for display
@@ -176,13 +175,12 @@ export default function KioskPage() {
     setActionLoading(kumonStudentId)
     const now = new Date().toISOString()
     const today = getLocalDateStr()
-    // Always write to kumon_sessions so check-in persists across reloads
-    await supabase.from('kumon_sessions').upsert({
-      id: `kiosk_${kumonStudentId}_${today}`,
+    // Write to kiosk_checkins so check-in persists across refreshes
+    await supabase.from('kiosk_checkins').upsert({
+      id: `${kumonStudentId}|${today}`,
       student_id: kumonStudentId,
-      session_date: today,
+      checkin_date: today,
       checked_in_at: now,
-      present: true,
     }, { onConflict: 'id' })
 
     if (bookingStudentId) {
@@ -225,10 +223,10 @@ export default function KioskPage() {
     if (sessionId) {
       await supabase.from('sessions').update({ checked_out_at: now }).eq('id', sessionId)
     }
-    await supabase.from('kumon_sessions').upsert({
-      id: `kiosk_${kumonStudentId}_${today}`,
+    await supabase.from('kiosk_checkins').upsert({
+      id: `${kumonStudentId}|${today}`,
       student_id: kumonStudentId,
-      session_date: today,
+      checkin_date: today,
       checked_out_at: now,
     }, { onConflict: 'id' })
     setAllStudents(prev => prev.map(s =>
