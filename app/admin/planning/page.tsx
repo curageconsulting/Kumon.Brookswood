@@ -485,6 +485,7 @@ export default function AdminPlanning() {
   const [goalModal,setGoalModal] = useState(null); // {studentId, subject} | null
   const [projModal,setProjModal] = useState(null); // {studentId, subject} | null
   const [plans,setPlans] = useState({});
+  const [dbGoals,setDbGoals] = useState<any>({}); // key: studentId|subject
   const [kiosk,setKiosk] = useState({});
   const [notifOn,setNotifOn] = useState(typeof Notification!=="undefined" && Notification.permission==="granted");
   const [notified,setNotified] = useState({});
@@ -699,6 +700,7 @@ export default function AdminPlanning() {
               selectedDate={selectedDate} setSelectedDate={setSelectedDate}
               getSession={getSession} onOpen={setSessionModal} goals={goals} plans={plans} kiosk={kiosk}
               allStudents={students} onSetup={setEditModal}
+              dbGoals={dbGoals}
               overstayList={overstayList} notifOn={notifOn} onEnableNotifications={enableNotifications}
               monthSessions={monthSessions} setMonthSessions={setMonthSessions}
               setPlans={setPlans} showToast={showToast}
@@ -936,7 +938,7 @@ function TodayTab({classStudents,allTodayStudents,todayDay,selectedDate,setSelec
 
 
 // ─── Record Book View — touch-friendly month record ─────────────────────────
-function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession,showToast,keywords=[],centerName="",teachers=[]}:any) {
+function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthSessions={},onMonthChange,onSavePlan,onDeletePlan,onSaveSession,showToast,keywords=[],centerName="",teachers=[],dbGoals={}}:any) {
   const todayRef = new Date()
   const [viewYear,setViewYear] = useState(todayRef.getFullYear())
   const [viewMonth,setViewMonth] = useState(todayRef.getMonth())
@@ -1067,6 +1069,8 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
               <span style={{fontSize:11,opacity:0.6}}>{s.grade||"—"}</span>
               <button onClick={()=>setAutoPopModal({studentId:s.id,sub:"math",color:"#3b82f6",level:s.mathLevel,ws:s.mathWorksheet,classWS:s.mathClassWS,homeworkWS:s.mathHomeworkWS})}
                 style={{border:"none",background:"rgba(255,255,255,0.15)",color:"white",borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>📅 Auto-fill</button>
+              <button onClick={()=>{const url=`${window.location.origin}/progress/${s.id}`;navigator.clipboard?.writeText(url);showToast("🔗 Link copied! Share with parent.")}}
+                style={{border:"none",background:"rgba(255,255,255,0.15)",color:"white",borderRadius:6,padding:"3px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>🔗 Share</button>
             </div>
           </div>
 
@@ -1075,9 +1079,34 @@ function RecordBookView({students,selectedDate,getSession,onOpen,plans={},monthS
             s.readingEnabled&&{sub:"reading",color:"#ec4899",label:"READING",level:s.readingLevel,ws:s.readingWorksheet}]
             .filter(Boolean).map(({sub,color,label,level,ws}:any)=>(
             <div key={sub} style={{borderTop:`2px solid ${color}22`}}>
-              <div style={{padding:"3px 12px",background:color+"0a",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                <span style={{fontSize:10,fontWeight:800,color}}>{label} · {level}{ws}</span>
-                <span style={{fontSize:9,color:"#94a3b8"}}>Tap a row to record</span>
+              <div style={{padding:"6px 12px",background:color+"0a"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <span style={{fontSize:10,fontWeight:800,color}}>{label} · {level}{ws}</span>
+                  <span style={{fontSize:9,color:"#94a3b8"}}>Tap row to record</span>
+                </div>
+                {(()=>{
+                  const gl=dbGoals[s.id+"|"+sub]
+                  if(!gl) return null
+                  const seq=sub==="math"?["6A","5A","4A","3A","2A","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O"]:["7A","6A","5A","4A","3A","2A","AI","AII","BI","BII","CI","CII","DI","DII","EI","EII","FI","FII","GI","GII","HI","HII","I-I","I-II","J","K","L","M","N","O"]
+                  const si=seq.indexOf(gl.start_level),ci=seq.indexOf(level||""),ti=seq.indexOf(gl.target_level)
+                  const total=ti>si?(ti-si)*200+(200-gl.start_worksheet):0
+                  const done=ci>si?(ci-si)*200+((ws||1)-gl.start_worksheet):0
+                  const pct=total>0?Math.min(100,Math.max(0,Math.round(done/total*100))):0
+                  const td=gl.target_date?new Date(gl.target_date).toLocaleDateString("en-CA",{month:"short",year:"numeric"}):null
+                  const dLeft=gl.target_date?Math.max(0,Math.round((new Date(gl.target_date).getTime()-Date.now())/86400000)):null
+                  return(
+                    <div>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                        <span style={{fontSize:9,color,fontWeight:700}}>🎯 Goal: {gl.target_level} {td?`by ${td}`:""}</span>
+                        <span style={{fontSize:9,color:"#64748b"}}>{dLeft!=null?`${dLeft} days left`:""}</span>
+                      </div>
+                      <div style={{background:"#e2e8f0",borderRadius:4,height:5,overflow:"hidden"}}>
+                        <div style={{height:"100%",borderRadius:4,background:`linear-gradient(90deg,${color},${color}80)`,width:`${pct}%`,transition:"width 0.8s ease"}}/>
+                      </div>
+                      <div style={{fontSize:9,color:"#94a3b8",marginTop:2,textAlign:"right"}}>{pct}% complete</div>
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Month rows — compact, touch-friendly */}
