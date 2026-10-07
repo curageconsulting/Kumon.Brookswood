@@ -216,7 +216,7 @@ export default function KioskPage() {
     setActionLoading(null)
   }
 
-  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string) {
+  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string, today: string) {
     setActionLoading(kumonStudentId)
     const now = new Date().toISOString()
     if (sessionId) {
@@ -327,7 +327,7 @@ export default function KioskPage() {
                         In: {new Date(s.checkedInAt).toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:true})}
                       </div>
                       <button
-                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName)}
+                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName, today)}
                         disabled={actionLoading === s.kumonId}
                         className="w-full py-3 rounded-xl bg-white text-[#0077B6] font-bold text-sm hover:bg-blue-50 active:scale-95 transition-all disabled:opacity-50">
                         {actionLoading === s.kumonId ? '…' : '🚪 Check Out'}
