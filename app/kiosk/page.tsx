@@ -127,15 +127,15 @@ export default function KioskPage() {
       .eq('status', 'active')
       .order('name', { ascending: true })
 
-// Deduplicate kumon students by kumon_student_id (one per student, not per subject)
-// Fall back to UUID id for new students who don't have a kumon_student_id yet
-const seenKid = new Set<any>()
-const allStudents = (kumonData || []).filter((k: any) => {
-  const key = k.kumon_student_id ?? `uuid:${k.id}`
-  if (seenKid.has(key)) return false
-  seenKid.add(key)
-  return true
-})
+    // Deduplicate kumon students by kumon_student_id (one per student, not per subject)
+    // Fall back to UUID id for new students who don't have a kumon_student_id yet
+    const seenKid = new Set<any>()
+    const allStudents = (kumonData || []).filter((k: any) => {
+      const key = k.kumon_student_id ?? `uuid:${k.id}`
+      if (seenKid.has(key)) return false
+      seenKid.add(key)
+      return true
+    })
 
     // Merge: find booking session for each kumon student via kumon_student_id bridge
     const { data: bookingStudents } = await supabase
