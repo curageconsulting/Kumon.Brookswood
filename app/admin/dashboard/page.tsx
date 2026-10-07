@@ -66,7 +66,7 @@ export default function AdminDashboard() {
     setProfile(prof)
     const today = new Date().toISOString().slice(0, 10)
     const [students, sessions, cancellations, families] = await Promise.all([
-      supabase.from('students').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+      supabase.from('kumon_students').select('*', { count: 'exact', head: true }).eq('status', 'active'),
       supabase.from('sessions').select('*', { count: 'exact', head: true }).eq('status', 'scheduled').gte('session_date', today),
       supabase.from('cancellations').select('*', { count: 'exact', head: true }),
       supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'parent'),
