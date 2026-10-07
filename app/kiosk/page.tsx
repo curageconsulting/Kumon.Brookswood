@@ -67,6 +67,7 @@ export default function KioskPage() {
   const [sessions, setSessions] = useState<SessionWithStudent[]>([])
   const [allStudents, setAllStudents] = useState<any[]>([])
   const [search, setSearch] = useState('')
+  const today = getLocalDateStr()
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [recentAction, setRecentAction] = useState<{ name: string; action: string } | null>(null)
@@ -87,8 +88,6 @@ export default function KioskPage() {
   }, [recentAction])
 
   async function load() {
-    const today = getLocalDateStr()
-
     // Load today's booked sessions for check-in state
     const { data: sessionData } = await supabase
       .from('sessions')
