@@ -174,6 +174,7 @@ export default function AdminDashboard() {
             <Link href="/admin/schedules" className="text-white/70 hover:text-white">Schedules</Link>
             <Link href="/admin/capacity" className="text-white/70 hover:text-white">Capacity</Link>
             <Link href="/admin/planning" className="text-white/70 hover:text-white">Planning</Link>
+        <Link href="/admin/reports" style={{ color: 'white', textDecoration: 'none', fontSize: 13, background: 'rgba(255,255,255,0.15)', padding: '6px 14px', borderRadius: 8, fontWeight: 600 }}>📊 Reports</Link>
             <button onClick={signOut} className="text-white/50 hover:text-white ml-2">Sign out</button>
           </div>
         </div>
