@@ -54,7 +54,7 @@ function Clock() {
   )
 }
 
-// FIX 1: Get today's date in LOCAL time (not UTC) so Friday doesn't flip to Saturday at 5pm Pacific
+// Always compute date fresh in local time — never use a stale value from component mount
 function getLocalDateStr() {
   const now = new Date()
   const y = now.getFullYear()
@@ -67,7 +67,6 @@ export default function KioskPage() {
   const [sessions, setSessions] = useState<SessionWithStudent[]>([])
   const [allStudents, setAllStudents] = useState<any[]>([])
   const [search, setSearch] = useState('')
-  const today = getLocalDateStr()
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [recentAction, setRecentAction] = useState<{ name: string; action: string } | null>(null)
@@ -88,6 +87,8 @@ export default function KioskPage() {
   }, [recentAction])
 
   async function load() {
+    const today = getLocalDateStr() // always fresh
+
     // Load today's booked sessions for check-in state
     const { data: sessionData } = await supabase
       .from('sessions')
@@ -175,7 +176,7 @@ export default function KioskPage() {
   async function walkInCheckIn(kumonStudentId: string, bookingStudentId: string | null, studentName: string) {
     setActionLoading(kumonStudentId)
     const now = new Date().toISOString()
-    const today = getLocalDateStr()
+    const today = getLocalDateStr() // always fresh
     // Write to kiosk_checkins so check-in persists across refreshes
     await supabase.from('kiosk_checkins').upsert({
       id: `${kumonStudentId}|${today}`,
@@ -218,9 +219,11 @@ export default function KioskPage() {
     setActionLoading(null)
   }
 
-  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string, today: string) {
+  // FIX: removed stale `today` parameter — always recompute fresh inside the function
+  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string) {
     setActionLoading(kumonStudentId)
     const now = new Date().toISOString()
+    const today = getLocalDateStr() // always fresh — fixes stale date bug
     if (sessionId) {
       await supabase.from('sessions').update({ checked_out_at: now }).eq('id', sessionId)
     }
@@ -257,6 +260,9 @@ export default function KioskPage() {
   const checkedIn = filtered.filter(s => s.checkedInAt && !s.checkedOutAt)
   const notArrived = filtered.filter(s => !s.checkedInAt)
   const checkedOut = filtered.filter(s => s.checkedOutAt)
+
+  // Always use fresh date for rendering
+  const today = getLocalDateStr()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0D1B2A] to-[#0077B6] flex flex-col">
@@ -329,7 +335,7 @@ export default function KioskPage() {
                         In: {new Date(s.checkedInAt).toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:true})}
                       </div>
                       <button
-                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName, today)}
+                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName)}
                         disabled={actionLoading === s.kumonId}
                         className="w-full py-3 rounded-xl bg-white text-[#0077B6] font-bold text-sm hover:bg-blue-50 active:scale-95 transition-all disabled:opacity-50">
                         {actionLoading === s.kumonId ? '…' : '🚪 Check Out'}
