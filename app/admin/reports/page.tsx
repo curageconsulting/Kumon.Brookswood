@@ -1,420 +1,269 @@
 'use client'
+// @ts-nocheck
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { formatTime } from '@/types'
+import Link from 'next/link'
 
-type SessionWithStudent = {
-  id: string
-  start_time: string
-  end_time: string
-  status: string
-  checked_in_at: string | null
-  checked_out_at: string | null
-  student: {
-    id: string
-    first_name: string
-    last_name: string
-    category: string
-  }
+const supabase = createClient()
+
+function fmt(iso: string | null) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return d.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
-function LiveTimer({ checkedInAt }: { checkedInAt: string }) {
-  const [elapsed, setElapsed] = useState(0)
-  useEffect(() => {
-    const start = new Date(checkedInAt).getTime()
-    const update = () => setElapsed(Math.floor((Date.now() - start) / 1000))
-    update()
-    const interval = setInterval(update, 1000)
-    return () => clearInterval(interval)
-  }, [checkedInAt])
-  const mins = Math.floor(elapsed / 60)
-  const secs = elapsed % 60
-  return (
-    <span className="font-mono font-bold text-2xl text-[#009FE3]">
-      {String(mins).padStart(2,'0')}:{String(secs).padStart(2,'0')}
-    </span>
-  )
+function duration(inAt: string | null, outAt: string | null) {
+  if (!inAt || !outAt) return '—'
+  const mins = Math.round((new Date(outAt).getTime() - new Date(inAt).getTime()) / 60000)
+  if (mins < 0) return '—'
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-function Clock() {
-  const [time, setTime] = useState(new Date())
-  useEffect(() => {
-    const interval = setInterval(() => setTime(new Date()), 1000)
-    return () => clearInterval(interval)
-  }, [])
-  return (
-    <div className="text-center">
-      <div className="text-5xl font-bold text-white font-mono tracking-wide">
-        {time.toLocaleTimeString('en-CA', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
-      </div>
-      <div className="text-white/70 text-lg mt-1">
-        {time.toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-      </div>
-    </div>
-  )
+function durationMins(inAt: string | null, outAt: string | null) {
+  if (!inAt || !outAt) return null
+  const mins = Math.round((new Date(outAt).getTime() - new Date(inAt).getTime()) / 60000)
+  return mins < 0 ? null : mins
 }
 
-// FIX 1: Get today's date in LOCAL time (not UTC) so Friday doesn't flip to Saturday at 5pm Pacific
-function getLocalDateStr() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
+export default function AttendanceReports() {
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10)
 
-export default function KioskPage() {
-  const [sessions, setSessions] = useState<SessionWithStudent[]>([])
-  const [allStudents, setAllStudents] = useState<any[]>([])
+  const [from, setFrom] = useState(firstOfMonth)
+  const [to, setTo] = useState(today)
+  const [rows, setRows] = useState<any[]>([])
+  const [students, setStudents] = useState<Record<string, any>>({})
+  const [loading, setLoading] = useState(false)
+  const [sortCol, setSortCol] = useState<string>('checkin_date')
+  const [sortDir, setSortDir] = useState<'asc'|'desc'>('desc')
   const [search, setSearch] = useState('')
-  const today = getLocalDateStr()
-  const [loading, setLoading] = useState(true)
-  const [actionLoading, setActionLoading] = useState<string | null>(null)
-  const [recentAction, setRecentAction] = useState<{ name: string; action: string } | null>(null)
-  const supabase = createClient()
 
-  useEffect(() => {
-    load()
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(load, 30000)
-    return () => clearInterval(interval)
-  }, [])
+  useEffect(() => { loadStudents() }, [])
+  useEffect(() => { if (Object.keys(students).length) loadReport() }, [from, to, students])
 
-  useEffect(() => {
-    if (recentAction) {
-      const t = setTimeout(() => setRecentAction(null), 3000)
-      return () => clearTimeout(t)
-    }
-  }, [recentAction])
+  async function loadStudents() {
+    const { data } = await supabase.from('kumon_students').select('id, name, math_level, reading_level')
+    const map: Record<string, any> = {}
+    for (const s of data || []) map[s.id] = s
+    setStudents(map)
+  }
 
-  async function load() {
-    // Load today's booked sessions for check-in state
-    const { data: sessionData } = await supabase
-      .from('sessions')
-      .select(`
-        id, start_time, end_time, status, checked_in_at, checked_out_at,
-        student:students(id, first_name, last_name, category)
-      `)
-      .eq('session_date', today)
-      .order('start_time', { ascending: true })
-
-    // Build session map by booking student id
-    const sessionByBookingId: Record<string, any> = {}
-    const seen = new Set<string>()
-    for (const s of (sessionData || [])) {
-      const sid = s.student?.id
-      if (!sid) continue
-      // Keep the one with check-in data if multiple
-      if (seen.has(sid) && !s.checked_in_at) continue
-      seen.add(sid)
-      sessionByBookingId[sid] = s
-    }
-
-    // Fetch kiosk check-in state for today (persists across refreshes)
-    const { data: kioskCheckins } = await supabase
+  async function loadReport() {
+    setLoading(true)
+    const { data, error } = await supabase
       .from('kiosk_checkins')
-      .select('student_id, checked_in_at, checked_out_at')
-      .eq('checkin_date', today)
-    const kumonCheckinByStudentId: Record<string, any> = {}
-    for (const kc of (kioskCheckins || [])) {
-      if (kc.student_id) kumonCheckinByStudentId[kc.student_id] = kc
-    }
-
-    // Load ALL active kumon students for display
-    const { data: kumonData } = await supabase
-      .from('kumon_students')
-      .select('id, kumon_student_id, name, status, parent_contact')
-      .eq('status', 'active')
-      .order('name', { ascending: true })
-
-    // Deduplicate kumon students by kumon_student_id (one per student, not per subject)
-    const seenKid = new Set<any>()
-    const allStudents = (kumonData || []).filter((k: any) => {
-      if (!k.kumon_student_id || seenKid.has(k.kumon_student_id)) return false
-      seenKid.add(k.kumon_student_id)
-      return true
-    })
-
-    // Merge: find booking session for each kumon student via kumon_student_id bridge
-    const { data: bookingStudents } = await supabase
-      .from('students')
-      .select('id, kumon_student_id')
-      .not('kumon_student_id', 'is', null)
-
-    const bookingIdByKid: Record<string, string> = {}
-    for (const b of (bookingStudents || [])) {
-      if (b.kumon_student_id) bookingIdByKid[String(b.kumon_student_id)] = b.id
-    }
-
-    // Build unified student list
-    const unified = allStudents.map((k: any) => {
-      const bookingId = bookingIdByKid[String(k.kumon_student_id)]
-      const session = bookingId ? sessionByBookingId[bookingId] : null
-      const [firstName, ...rest] = (k.name || '').split(' ')
-      return {
-        kumonId: k.id,
-        kumonStudentId: k.kumon_student_id,
-        bookingStudentId: bookingId || null,
-        firstName,
-        lastName: rest.join(' '),
-        sessionId: session?.id || null,
-        checkedInAt: session?.checked_in_at || kumonCheckinByStudentId[k.id]?.checked_in_at || null,
-        checkedOutAt: session?.checked_out_at || kumonCheckinByStudentId[k.id]?.checked_out_at || null,
-        startTime: session?.start_time || null,
-        endTime: session?.end_time || null,
-        isBooked: !!session,
-      }
-    })
-
-    setAllStudents(unified)
+      .select('*')
+      .gte('checkin_date', from)
+      .lte('checkin_date', to)
+      .order('checkin_date', { ascending: false })
+    if (!error) setRows(data || [])
     setLoading(false)
   }
 
-  async function walkInCheckIn(kumonStudentId: string, bookingStudentId: string | null, studentName: string) {
-    setActionLoading(kumonStudentId)
-    const now = new Date().toISOString()
-    const today = getLocalDateStr()
-    // Write to kiosk_checkins so check-in persists across refreshes
-    await supabase.from('kiosk_checkins').upsert({
-      id: `${kumonStudentId}|${today}`,
-      student_id: kumonStudentId,
-      checkin_date: today,
-      checked_in_at: now,
-    }, { onConflict: 'id' })
-
-    if (bookingStudentId) {
-      const { data: newSess } = await supabase.from('sessions').insert({
-        student_id: bookingStudentId,
-        session_date: today,
-        start_time: new Date().toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:false}),
-        end_time: '19:00',
-        status: 'makeup',
-        checked_in_at: now,
-      }).select().single()
-      setAllStudents(prev => prev.map(s =>
-        s.kumonId === kumonStudentId ? { ...s, sessionId: newSess?.id, checkedInAt: now, isBooked: true } : s
-      ))
-    } else {
-      setAllStudents(prev => prev.map(s =>
-        s.kumonId === kumonStudentId ? { ...s, checkedInAt: now } : s
-      ))
+  function sortedRows() {
+    let r = [...rows]
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      r = r.filter(row => {
+        const s = students[row.student_id]
+        return s?.name?.toLowerCase().includes(q)
+      })
     }
-    setRecentAction({ name: studentName, action: 'checked in' })
-    setActionLoading(null)
+    r.sort((a, b) => {
+      let av: any, bv: any
+      if (sortCol === 'name') {
+        av = students[a.student_id]?.name || ''
+        bv = students[b.student_id]?.name || ''
+      } else if (sortCol === 'duration') {
+        av = durationMins(a.checked_in_at, a.checked_out_at) ?? -1
+        bv = durationMins(b.checked_in_at, b.checked_out_at) ?? -1
+      } else {
+        av = a[sortCol] || ''
+        bv = b[sortCol] || ''
+      }
+      if (av < bv) return sortDir === 'asc' ? -1 : 1
+      if (av > bv) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return r
   }
 
-  async function checkIn(sessionId: string, studentName: string) {
-    setActionLoading(sessionId)
-    const now = new Date().toISOString()
-    await supabase.from('sessions')
-      .update({ checked_in_at: now })
-      .eq('id', sessionId)
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId ? { ...s, checked_in_at: now } : s
-    ))
-    setRecentAction({ name: studentName, action: 'checked in' })
-    setActionLoading(null)
+  function toggleSort(col: string) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortCol(col); setSortDir('asc') }
   }
 
-  async function walkInCheckOut(kumonStudentId: string, sessionId: string | null, studentName: string) {
-    setActionLoading(kumonStudentId)
-    const now = new Date().toISOString()
-    const today = getLocalDateStr() // always fresh — fixes stale date bug
-    if (sessionId) {
-      await supabase.from('sessions').update({ checked_out_at: now }).eq('id', sessionId)
+  function arrow(col: string) {
+    if (sortCol !== col) return ' ↕'
+    return sortDir === 'asc' ? ' ↑' : ' ↓'
+  }
+
+  function downloadCSV() {
+    const displayed = sortedRows()
+    const headers = ['Date', 'Student', 'Math Level', 'Reading Level', 'Check-In', 'Check-Out', 'Duration (mins)']
+    const csvRows = [headers.join(',')]
+    for (const row of displayed) {
+      const s = students[row.student_id] || {}
+      const mins = durationMins(row.checked_in_at, row.checked_out_at)
+      csvRows.push([
+        row.checkin_date,
+        `"${s.name || row.student_id}"`,
+        s.math_level || '',
+        s.reading_level || '',
+        fmt(row.checked_in_at),
+        fmt(row.checked_out_at),
+        mins ?? '',
+      ].join(','))
     }
-    await supabase.from('kiosk_checkins').upsert({
-      id: `${kumonStudentId}|${today}`,
-      student_id: kumonStudentId,
-      checkin_date: today,
-      checked_out_at: now,
-    }, { onConflict: 'id' })
-    setAllStudents(prev => prev.map(s =>
-      s.kumonId === kumonStudentId ? { ...s, checkedOutAt: now } : s
-    ))
-    setRecentAction({ name: studentName, action: 'checked out' })
-    setActionLoading(null)
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `attendance_${from}_to_${to}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
-  async function checkOut(sessionId: string, studentName: string) {
-    setActionLoading(sessionId)
-    const now = new Date().toISOString()
-    await supabase.from('sessions')
-      .update({ checked_out_at: now })
-      .eq('id', sessionId)
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId ? { ...s, checked_out_at: now } : s
-    ))
-    setRecentAction({ name: studentName, action: 'checked out' })
-    setActionLoading(null)
-  }
+  const displayed = sortedRows()
+  const totalSessions = displayed.length
+  const completed = displayed.filter(r => r.checked_out_at).length
+  const avgMins = (() => {
+    const valid = displayed.map(r => durationMins(r.checked_in_at, r.checked_out_at)).filter(m => m !== null) as number[]
+    if (!valid.length) return null
+    return Math.round(valid.reduce((a, b) => a + b, 0) / valid.length)
+  })()
 
-  // Derived lists from allStudents
-  const filtered = allStudents.filter(s =>
-    !search || (s.firstName + ' ' + s.lastName).toLowerCase().includes(search.toLowerCase())
-  )
-  const checkedIn = filtered.filter(s => s.checkedInAt && !s.checkedOutAt)
-  const notArrived = filtered.filter(s => !s.checkedInAt)
-  const checkedOut = filtered.filter(s => s.checkedOutAt)
+  const th = {
+    padding: '10px 14px',
+    textAlign: 'left' as const,
+    fontSize: 12,
+    fontWeight: 700,
+    color: '#64748b',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+    borderBottom: '2px solid #e2e8f0',
+    cursor: 'pointer',
+    userSelect: 'none' as const,
+    whiteSpace: 'nowrap' as const,
+  }
+  const td = {
+    padding: '10px 14px',
+    fontSize: 14,
+    borderBottom: '1px solid #f1f5f9',
+    color: '#1e293b',
+  }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#0D1B2A] to-[#0077B6] flex flex-col">
-
+    <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
       {/* Header */}
-      <div className="px-8 pt-8 pb-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <img src="/kumon-logo.png" alt="Kumon" className="h-12 rounded-lg" />
+      <div style={{ background: '#1e3a5f', color: 'white', padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 16 }}>
+        <Link href="/admin/dashboard" style={{ color: 'white', textDecoration: 'none', fontSize: 20 }}>←</Link>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 18 }}>Attendance Reports</div>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Kumon Brookswood — kiosk check-in data</div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 16px' }}>
+
+        {/* Controls */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
           <div>
-            <div className="text-white font-bold text-xl">Kumon Brookswood</div>
-            <div className="text-white/60 text-sm">Student Check-In</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>FROM</div>
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+              style={{ padding: '8px 12px', border: '1.5px solid #cbd5e1', borderRadius: 8, fontSize: 14 }} />
           </div>
-        </div>
-        <Clock />
-      </div>
-
-      {/* Search */}
-      <div className="px-8 pb-4">
-        <input
-          type="text"
-          placeholder="🔍 Search student name..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full max-w-md px-4 py-2 rounded-xl bg-white/10 text-white placeholder-white/40 border border-white/20 outline-none focus:bg-white/20 text-sm"
-        />
-        <span className="text-white/40 text-xs ml-4">
-          {filtered.length} students · {checkedIn.length} in center
-        </span>
-      </div>
-
-      {/* Success toast */}
-      {recentAction && (
-        <div className="mx-8 mb-4 p-4 bg-green-400/20 border border-green-400/40 rounded-2xl text-center">
-          <span className="text-green-300 font-semibold text-lg">
-            ✅ {recentAction.name} successfully {recentAction.action}!
-          </span>
-        </div>
-      )}
-
-      <div className="flex-1 px-8 pb-8 overflow-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-white/50 text-lg">Loading students…</div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>TO</div>
+            <input type="date" value={to} onChange={e => setTo(e.target.value)}
+              style={{ padding: '8px 12px', border: '1.5px solid #cbd5e1', borderRadius: 8, fontSize: 14 }} />
           </div>
-        ) : (
-          <div className="space-y-6">
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>SEARCH</div>
+            <input type="text" placeholder="Student name..." value={search} onChange={e => setSearch(e.target.value)}
+              style={{ padding: '8px 12px', border: '1.5px solid #cbd5e1', borderRadius: 8, fontSize: 14, width: 180 }} />
+          </div>
+          <button onClick={downloadCSV}
+            style={{ padding: '9px 18px', background: '#1e3a5f', color: 'white', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+            ⬇ Download CSV
+          </button>
+        </div>
 
-            {/* Currently Present */}
-            {checkedIn.length > 0 && (
-              <div>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse"/>
-                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">
-                    In Center ({checkedIn.length})
-                  </h2>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                  {checkedIn.map(s => (
-                    <div key={s.kumonId} className="bg-blue-500/20 border border-blue-400/40 rounded-2xl p-4 flex flex-col items-center gap-3">
-                      <div className="w-14 h-14 rounded-full bg-blue-400/30 flex items-center justify-center text-2xl font-bold text-white">
-                        {s.firstName?.[0]}{s.lastName?.[0]}
-                      </div>
-                      <div className="text-center">
-                        <div className="text-white font-semibold text-sm">{s.firstName}</div>
-                        <div className="text-white/60 text-xs">{s.lastName}</div>
-                        {!s.isBooked && <div className="text-yellow-300 text-xs mt-1">Walk-in</div>}
-                      </div>
-                      <LiveTimer checkedInAt={s.checkedInAt} />
-                      <div className="text-white/40 text-xs">
-                        In: {new Date(s.checkedInAt).toLocaleTimeString('en-CA', {hour:'2-digit', minute:'2-digit', hour12:true})}
-                      </div>
-                      <button
-                        onClick={() => walkInCheckOut(s.kumonId, s.sessionId, s.firstName)}
-                        disabled={actionLoading === s.kumonId}
-                        className="w-full py-3 rounded-xl bg-white text-[#0077B6] font-bold text-sm hover:bg-blue-50 active:scale-95 transition-all disabled:opacity-50">
-                        {actionLoading === s.kumonId ? '…' : '🚪 Check Out'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+        {/* Summary cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 20 }}>
+          {[
+            { label: 'Total Check-ins', value: totalSessions },
+            { label: 'Checked Out', value: completed },
+            { label: 'Still In / Unknown', value: totalSessions - completed },
+            { label: 'Avg Time (mins)', value: avgMins ?? '—' },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ background: 'white', borderRadius: 12, padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,0.07)' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#64748b', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: '#1e3a5f' }}>{value}</div>
+            </div>
+          ))}
+        </div>
 
-            {/* Not Yet Arrived — ALL active students */}
-            {notArrived.length > 0 && (
-              <div>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-3 h-3 rounded-full bg-slate-400"/>
-                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">
-                    All Students ({notArrived.length})
-                  </h2>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                  {notArrived.map(s => (
-                    <div key={s.kumonId} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col items-center gap-3 hover:bg-white/10 transition-colors">
-                      <div className="w-14 h-14 rounded-full bg-white/10 flex items-center justify-center text-2xl font-bold text-white/70">
-                        {s.firstName?.[0]}{s.lastName?.[0]}
-                      </div>
-                      <div className="text-center">
-                        <div className="text-white font-semibold text-sm">{s.firstName}</div>
-                        <div className="text-white/50 text-xs">{s.lastName}</div>
-                        {s.startTime && (
-                          <div className="text-white/30 text-xs mt-1">
-                            Booked {s.startTime}
-                          </div>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => walkInCheckIn(s.kumonId, s.bookingStudentId, s.firstName)}
-                        disabled={actionLoading === s.kumonId}
-                        className="w-full py-3 rounded-xl bg-[#009FE3] text-white font-bold text-sm hover:bg-[#0077B6] active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-blue-500/30">
-                        {actionLoading === s.kumonId ? '…' : '✅ Check In'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Checked Out */}
-            {checkedOut.length > 0 && (
-              <div>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-3 h-3 rounded-full bg-green-400"/>
-                  <h2 className="text-white/80 text-sm font-semibold uppercase tracking-widest">Done for Today ({checkedOut.length})</h2>
-                </div>
-                <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                  {checkedOut.map(s => {
-                    const mins = s.checkedInAt && s.checkedOutAt
-                      ? Math.round((new Date(s.checkedOutAt).getTime() - new Date(s.checkedInAt).getTime()) / 60000)
-                      : null
+        {/* Table */}
+        <div style={{ background: 'white', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>Loading...</div>
+          ) : displayed.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: '#94a3b8' }}>No records found for this date range.</div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f8fafc' }}>
+                    <th style={th} onClick={() => toggleSort('checkin_date')}>Date{arrow('checkin_date')}</th>
+                    <th style={th} onClick={() => toggleSort('name')}>Student{arrow('name')}</th>
+                    <th style={th}>Math</th>
+                    <th style={th}>Reading</th>
+                    <th style={th} onClick={() => toggleSort('checked_in_at')}>Check-In{arrow('checked_in_at')}</th>
+                    <th style={th} onClick={() => toggleSort('checked_out_at')}>Check-Out{arrow('checked_out_at')}</th>
+                    <th style={th} onClick={() => toggleSort('duration')}>Time Spent{arrow('duration')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayed.map((row, i) => {
+                    const s = students[row.student_id] || {}
+                    const mins = durationMins(row.checked_in_at, row.checked_out_at)
+                    const isLong = mins !== null && mins > 90
+                    const isShort = mins !== null && mins < 30
                     return (
-                      <div key={s.kumonId} className="bg-green-500/10 border border-green-400/20 rounded-xl p-3 flex flex-col items-center gap-1 opacity-60">
-                        <div className="w-10 h-10 rounded-full bg-green-400/20 flex items-center justify-center text-lg font-bold text-green-300">
-                          {s.firstName?.[0]}{s.lastName?.[0]}
-                        </div>
-                        <div className="text-green-300 text-xs font-medium">{s.firstName}</div>
-                        {mins && <div className="text-green-400/60 text-[10px]">{mins} min</div>}
-                        <div className="text-green-400/40 text-[10px]">✅ Done</div>
-                      </div>
+                      <tr key={row.id || i} style={{ background: i % 2 === 0 ? 'white' : '#fafbfc' }}>
+                        <td style={td}>{row.checkin_date}</td>
+                        <td style={{ ...td, fontWeight: 600 }}>{s.name || row.student_id}</td>
+                        <td style={{ ...td, color: '#6366f1', fontSize: 12 }}>{s.math_level || '—'}</td>
+                        <td style={{ ...td, color: '#0ea5e9', fontSize: 12 }}>{s.reading_level || '—'}</td>
+                        <td style={td}>{fmt(row.checked_in_at)}</td>
+                        <td style={{ ...td, color: row.checked_out_at ? '#1e293b' : '#94a3b8' }}>
+                          {row.checked_out_at ? fmt(row.checked_out_at) : 'Not checked out'}
+                        </td>
+                        <td style={{ ...td }}>
+                          {mins !== null ? (
+                            <span style={{
+                              background: isLong ? '#fef2f2' : isShort ? '#fffbeb' : '#f0fdf4',
+                              color: isLong ? '#dc2626' : isShort ? '#d97706' : '#16a34a',
+                              padding: '3px 8px', borderRadius: 6, fontWeight: 600, fontSize: 13
+                            }}>
+                              {duration(row.checked_in_at, row.checked_out_at)}
+                            </span>
+                          ) : '—'}
+                        </td>
+                      </tr>
                     )
                   })}
-                </div>
-              </div>
-            )}
-
-            {filtered.length === 0 && (
-              <div className="flex items-center justify-center h-64">
-                <div className="text-white/40 text-lg">No students found</div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div className="px-8 py-4 border-t border-white/10 flex items-center justify-between">
-        <div className="text-white/30 text-xs">Kumon Brookswood · 4043 200 St, Langley BC</div>
-        <div className="text-white/30 text-xs">{allStudents.length} active students · Auto-refreshes every 30s</div>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div style={{ marginTop: 8, fontSize: 12, color: '#94a3b8', textAlign: 'right' }}>
+          {displayed.length} record{displayed.length !== 1 ? 's' : ''}
+        </div>
       </div>
     </div>
   )
